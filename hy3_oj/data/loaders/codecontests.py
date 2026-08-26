@@ -94,6 +94,15 @@ def iter_problems(split: str = "train", limit: int | None = None, streaming: boo
     if os.environ.get("HF_ENDPOINT"):
         os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
 
+    # 大型数据缓存优先放 D 盘（configs.data.hf_home），避免占满工作区所在 C 盘
+    if not os.environ.get("HF_HOME"):
+        try:
+            from hy3_oj.core.config import load_config
+
+            os.environ["HF_HOME"] = load_config().get("data", {}).get("hf_home", "D:/hy3-oj-data/hf")
+        except Exception:  # noqa: BLE001
+            pass
+
     ds = load_dataset("deepmind/code_contests", split=split, streaming=streaming)
     seen: set[str] = set()
     n = 0

@@ -1,13 +1,15 @@
 # Hy3-OJ 默认配置（可被 configs/*.yaml 与环境变量覆盖）
 llm:
-  base_url: "https://api.hunyuan.cloud.tencent.com/v1"  # Hy3 OpenAI 兼容端点，以官方文档为准
+  base_url_env: "HY3_BASE_URL"        # 端点走环境变量（TokenHub 端点见 .env.example），用户自行配置
+  base_url_default: "https://tokenhub.tencentmaas.com/v1"  # env 未设时的兜底
   api_key_env: "HY3_API_KEY"          # 密钥只走环境变量，禁止写入本文件
-  model_fast: "hy3-fast"              # TODO(D1 实测): 快思考模型名/参数
-  model_slow: "hy3-slow"              # TODO(D1 实测): 慢思考模型名/参数
+  model: "hy3"                        # 已实测：同一模型，返回含 reasoning_content（快慢思考融合）
+  slow_extra_body: {}                 # 已实测：默认即慢思考（reasoning_content 非空）
+  fast_extra_body: {"thinking": {"type": "disabled"}}  # 已实测：reasoning_tokens=0，快思考
   max_retries: 5
   timeout_s: 300
   concurrency: 8
-  cache_dir: "runs/llm_cache"
+  cache_dir: "D:/hy3-oj-data/llm_cache"
 
 solve:
   k_samples: 6                        # Coder K 路采样
@@ -29,6 +31,7 @@ data:
   subset_size: 300
   subset_seed: 42
   subset_path: "data/subsets"
+  hf_home: "D:/hy3-oj-data/hf"        # 大型评测数据缓存放 D 盘（工作区在 C 盘）
   difficulty_buckets: ["easy", "medium", "hard"]
 
 eval:
