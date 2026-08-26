@@ -1,0 +1,26 @@
+# ---- 密钥与本地配置（任务书硬性要求：任何密钥不得入库）----
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.*
+*secret*
+*credential*
+
+# ---- Python ----
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# ---- 运行产物与数据缓存 ----
+runs/
+data/subsets/
+docs/_pdf_extract.txt
+
+# ---- 工具 ----
+.streamlit/
+.vscode/
+.idea/
+.codebuddy/

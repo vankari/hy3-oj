@@ -1,0 +1,39 @@
+# Hy3-OJ 默认配置（可被 configs/*.yaml 与环境变量覆盖）
+llm:
+  base_url: "https://api.hunyuan.cloud.tencent.com/v1"  # Hy3 OpenAI 兼容端点，以官方文档为准
+  api_key_env: "HY3_API_KEY"          # 密钥只走环境变量，禁止写入本文件
+  model_fast: "hy3-fast"              # TODO(D1 实测): 快思考模型名/参数
+  model_slow: "hy3-slow"              # TODO(D1 实测): 慢思考模型名/参数
+  max_retries: 5
+  timeout_s: 300
+  concurrency: 8
+  cache_dir: "runs/llm_cache"
+
+solve:
+  k_samples: 6                        # Coder K 路采样
+  temperatures: [0.2, 0.4, 0.6, 0.8, 0.9, 1.0]
+  max_repair_rounds: 4                # 修复闭环上限 N
+  token_budget_per_problem: 200000
+  language: "python3"                 # 先 py3；cpp17 为 stretch goal
+
+sandbox:
+  image: "python:3.11-slim"
+  time_limit_s: 5
+  memory_mb: 512
+  nano_cpus: 1000000000               # 1 vCPU
+  network_disabled: true
+  container_pool: 4
+
+data:
+  primary: "codecontests"             # 优先；livecodebench 后置
+  subset_size: 300
+  subset_seed: 42
+  subset_path: "data/subsets"
+  difficulty_buckets: ["easy", "medium", "hard"]
+
+eval:
+  passk: [1, 2, 4, 8]
+  runs_dir: "runs"
+  localization_target: 0.70           # 过程评估：错误步骤定位准确率目标
+  false_positive_target: 0.20         # 过程评估：误报率上限
+  human_spot_check_n: 50
