@@ -15,9 +15,10 @@ __pycache__/
 *.egg-info/
 
 # ---- 运行产物与数据缓存 ----
-runs/
+runs/*
 !runs/*.md                  # 评测/消融报告属交付物，放行入库
 runs/llm_cache/
+runs/trace/
 data/subsets/
 docs/_pdf_extract.txt
 
