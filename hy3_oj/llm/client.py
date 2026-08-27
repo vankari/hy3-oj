@@ -48,11 +48,15 @@ class Hy3Client:
             GenMode.FAST: llm_cfg.get("fast_extra_body") or {},
             GenMode.SLOW: llm_cfg.get("slow_extra_body") or {},
         }
+        import httpx
+
+        # trust_env=False：忽略系统/终端代理变量，TokenHub 为国内端点须直连
         self._client = AsyncOpenAI(
             api_key=get_api_key(config),
             base_url=get_base_url(config),
             timeout=llm_cfg.get("timeout_s", 300),
             max_retries=llm_cfg.get("max_retries", 5),
+            http_client=httpx.AsyncClient(trust_env=False, timeout=llm_cfg.get("timeout_s", 300)),
         )
         self._sem = asyncio.Semaphore(llm_cfg.get("concurrency", 8))
         self._cache = self._open_cache(llm_cfg.get("cache_dir"))
