@@ -37,6 +37,10 @@ pytest tests/                         # 冒烟测试
 - [方案设计文档](混元大语言模型-场景二算法竞赛方向-方案设计.md)：总体方向（思路/架构/重点技术/预期效果/时间规划）
 - [项目架构设计](docs/项目架构设计.md)：folder 级模块设计、交互关系、算法思路、参考文献
 - [PDF 任务书对齐](docs/pdf任务书对齐.md)：任务书硬性要求逐条对齐表
+- [闭环消融报告](docs/ablation_report.md)：基线 vs 闭环（CodeContests 31 题冒烟 + 100 题扩展 + v3 增强）
+- [过程评估报告](docs/process_evaluation_report.md)：任务书核心 R3–R8（五段式审查/定位准确率/误报率/蒙对案例）
+- [LiveCodeBench 评测报告](docs/lcb_report.md)：第二题集 60 题（基线 30% → 闭环 68.3%）
+- [人工抽检指南](docs/人工抽检指南.md)：human_verdict 填写规范（R7 误报率验证）
 
 ## AI 协作说明
 

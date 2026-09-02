@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+from hy3_oj.agents import coder
 from hy3_oj.core.schemas import GenMode, JudgeResult, Plan, Problem, Reflection, Solution, Verdict
 from hy3_oj.llm.client import Hy3Client
 from hy3_oj.agents.coder import extract_code
@@ -31,6 +32,11 @@ async def reflect(
     """对一次失败判题做归因，产出修复指令与修复后代码。"""
     verdict = judge.verdict
     ft = judge.failed_test
+    # call-based 题必须重申判题协议，否则修复会把代码改回 stdin 解析版 → 仍 RE
+    io_rule = (
+        "**保持 call-based 判题约定**：实现类与方法签名，不要改回 input() 解析，不要自己写驱动入口。"
+        if coder.is_call_based(problem) else "保持 stdin 读入 / stdout 输出约定。"
+    )
     user = (
         f"题目约束：{problem.constraints or '见题面'}\n"
         f"解题计划：{plan.approach if plan else '无'}\n"
@@ -38,7 +44,7 @@ async def reflect(
         f"判题结果：{verdict.value}\n"
         f"错误输出：{judge.stderr[:800]}\n"
         + (f"失败测试点输入：\n{ft.input[:500]}\n期望：{(ft.expected_output or '')[:300]}\n差异：{judge.diff_excerpt[:400]}\n" if ft else "")
-        + "\n输出：归因诊断（≤3 句）→ 修复指令（≤3 条）→ 完整修复后代码（```python 代码块）。"
+        + f"\n{io_rule}\n输出：归因诊断（≤3 句）→ 修复指令（≤3 条）→ 完整修复后代码（```python 代码块）。"
     )
     # 快思考：慢思考输出是 CoT 会被 max_tokens 截断，到不了修复代码块（实测踩坑）
     r = await client.chat(
@@ -48,6 +54,7 @@ async def reflect(
     )
     text = r.content
     fixed_code = extract_code(text)
+    fixed_code = coder.ensure_driver(fixed_code, problem)  # 修复后漏驱动 → 补挂
     # 诊断取代码块前的文本；为空时退化用慢思考轨迹或原文截断
     diagnosis = text.split("```")[0].strip()[:500] or (r.reasoning or "")[:500] or text[:500]
     return Reflection(

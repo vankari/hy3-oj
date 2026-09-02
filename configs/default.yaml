@@ -12,14 +12,26 @@ llm:
   cache_dir: "D:/hy3-oj-data/llm_cache"
 
 solve:
-  k_samples: 6                        # Coder K 路采样
-  temperatures: [0.2, 0.4, 0.6, 0.8, 0.9, 1.0]
+  k_samples: 6                        # easy 档采样
+  k_samples_medium: 8                 # medium 档（90+ 攻坚：加大覆盖）
+  k_samples_hard: 12                  # hard 档（90+ 攻坚：加大覆盖）
+  n_diverse_plans: 3                  # medium/hard 档多算法范式 Plan 数（90+ 攻坚：路径覆盖）
+  main_plan_ratio: 0.6                # 主 plan 采样占比（均分会掉深度，v5 实测教训）
+  temperatures: [0.2, 0.4, 0.6, 0.8, 0.9, 1.0, 0.3, 0.5, 0.7, 0.85, 0.95, 1.05]  # 12 路温度分层
   max_repair_rounds: 4                # 修复闭环上限 N
+  max_repair_rounds_hard: 6           # hard 档加大修复轮数（提升空间 #1）
+  repair_top_k: 3                     # 预筛后进入修复环的候选数（top-k 并行修复，提升空间 #4）
+  deep_analysis_difficulties: ["hard"]  # 这些难度先跑慢思考自由文本深分析（提升空间 #1）
+  brute_force_oracle: true            # Tester 暴力参考解差分对拍（提升空间 #2）
+  special_judge: true                 # 多解题 LLM 特判 checker（618_B 根因修复）
+  cpp_fallback: true                  # Python 轮数耗尽后 C++17 兜底（hard 档 TLE 攻坚）
+  cpp_fallback_difficulties: ["hard"]
   token_budget_per_problem: 200000
   language: "python3"                 # 先 py3；cpp17 为 stretch goal
 
 sandbox:
   image: "python:3.11-slim"
+  cpp_image: "gcc:13"                 # C++17 编译运行镜像（hard 档 TLE 攻坚）
   time_limit_s: 5
   memory_mb: 512
   nano_cpus: 1000000000               # 1 vCPU

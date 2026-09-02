@@ -44,19 +44,31 @@ configs/default.yaml   全部可调参数（模型名/采样/沙箱限额/评测
 ```powershell
 conda activate hy3-oj          # Python 3.11；依赖见 requirements.txt / environment.yml
 pytest tests/                  # 冒烟（Docker 未启动时沙箱用例自动 skip）
-python scripts/run_solve.py --problem-id <id>
+python scripts/run_solve.py --subset data/subsets/subset_mid100.jsonl --out runs/x.jsonl
+# 正式集（300 题）闭环 + 过程评估 + 分层报告（断点续跑，重跑同一命令即可续跑）
+python scripts/run_eval.py --subset data/subsets/subset_v1.jsonl \
+  --out-solve runs/closed_loop_v3_300.jsonl --out-review runs/review_v3_300.jsonl \
+  --report docs/formal_eval_report.md
 ```
 
 - 开发机为 Windows：沙箱**必须走 Docker 容器**（rlimit 不可用）；Docker Desktop 需手动启动。
 - Hy3 快/慢思考的模型名/参数尚未实测：`configs/default.yaml` 中 `model_fast/model_slow` 为占位，实测后只改配置。
 
-## 6. 当前进度（2026-08-26）
+## 6. 当前进度（2026-09-01）
 
-- [x] 方案文档 + 架构文档 + 任务书对齐；`hy3-oj` 环境；全量骨架（33 模块可导入，7 测试通过）
-- [ ] D1–D3：Hy3 API 实测回填配置；CodeContests loader + 分层子集；单轮直出基线
-- [ ] D4–D6：DockerExecutor + judge 校准（verdict 一致率 ≥99%）
-- [ ] D7–D10：Agent 闭环 + Reviewer 过程评估器（五段式 + 蒙对规则已占位）
-- [ ] D11–D13：全量评测 + 定位准确率/误报率验证 + Demo；D14–D16 收尾，9/11 交付
+- [x] 方案文档 + 架构文档 + 任务书对齐；`hy3-oj` 环境；全量骨架
+- [x] D1–D6：Hy3 API 实测回填；CodeContests loader + 分层子集；单轮基线；DockerExecutor + judge
+- [x] D7–D10：闭环管线（51.6%→70% mid100）+ Reviewer 过程评估器
+- [x] Reviewer 迭代至 v0.5（LLM 语义 + 行为探针双层）：定位准确率 74%✓、误报率 0%✓（机器定罪口径）；
+  mid100 扩展验证 70%（v3 重跑后 73%）；14 候选全量人工抽检完成（13FP+1real，p01811 探针铁证）
+- [x] v3 管线增强：hard 自适应预算 + 慢思考深分析 + 暴力对拍预筛 + top-2 并行修复 + 多解特判 checker；
+  执行器加固（进程组整杀/总预算截断/容器崩溃归类）
+- [x] LiveCodeBench 接入：loader（call-based 适配/private pickle 解码）+ 60 题子集，
+  基线 30.0% → 闭环 68.3%（+38.3pt，2.28×）
+- [x] D11 正式集评测管线（d11-formal-eval）：`eval/runner.py`（闭环跑批 + 全量过程审查，断点续跑）
+  + `eval/report.py`（easy/medium/hard 分层：答案正确率 / 过程正确率 / 五段逐段正确率 / 错误类型 / 能力临界点）
+  + `scripts/run_eval.py` 一键跑批入口（solve → review → report）
+- [ ] D11–D13：300 题正式集跑批出分 + Demo 视频 + 技术报告终稿；D14–D16 收尾，9/11 交付
 
 ## 7. 常见坑
 
@@ -64,3 +76,8 @@ python scripts/run_solve.py --problem-id <id>
 - PowerShell 内联中文路径易乱码：涉及中文文件名的操作用脚本文件执行（UTF-8）。
 - `deepmind/code_contests` 体积大：先 `subset.py` 分层抽样落盘再开发，别全量加载。
 - AC 不等于结束：Reviewer 对 AC 解也要跑蒙对检测（任务书 R6）。
+- **D 盘已 100% 满**（123G，非本项目占用）：HF 缓存经 `HY3_HF_CACHE` 环境变量切到 C 盘（如 `C:/hy3-oj-cache/hf`）。
+- LCB `private_test_cases` 结构是 base64→zlib→pickle→**JSON 字符串**（多层嵌套，别只解到 pickle）。
+- 慢思考输出是 CoT：结构化输出类 Agent（Planner/Reflector/Reviewer/Coder）必须快思考；
+  慢思考只用于自由文本深分析（planner.deep_analyze）。
+- Docker 执行器曾遇孙进程挂管挂死：runner 已硬化（killpg 整组 + 总预算截断），勿回退。
