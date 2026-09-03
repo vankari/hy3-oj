@@ -181,7 +181,10 @@ class SolvePipeline:
         # 7. 全量判题 + top-k 并行修复闭环
         all_tests = problem.public_tests + problem.private_tests + problem.generated_tests
         used_cpp = False  # C++17 兜底只允许触发一次，避免无限循环
-        for round_idx in range(max_rounds + 1):
+        # while 而非 for：C++ 兜底会重置 round_idx，for 循环的迭代器会覆盖该赋值
+        # 导致 C++ 代码生成后从未被判题（v9 实测：CPP_FALLBACK 后无任何 JUDGED）
+        round_idx = 0
+        while round_idx <= max_rounds:
             judged: list[list[JudgeResult]] = await asyncio.gather(*[
                 asyncio.to_thread(self.executor.execute, c, all_tests, checker_code) for c in pool
             ])
@@ -218,7 +221,7 @@ class SolvePipeline:
                     )
                     pool = cpp_sols
                     trace.append({"state": "CPP_FALLBACK", "k": len(cpp_sols)})
-                    round_idx = -1  # 重置轮数，给 C++ 一轮完整修复机会
+                    round_idx = 0  # 重置轮数，给 C++ 一轮完整的判题+修复机会
                     continue
                 except Exception as e:  # noqa: BLE001
                     trace.append({"state": "CPP_FALLBACK", "warn": f"cpp fallback failed: {e}"})
@@ -245,6 +248,7 @@ class SolvePipeline:
                                                 temperatures=[0.4, 0.7], mode=GenMode.FAST)
                     trace.append({"state": "REFINED", "round": round_idx,
                                   "new_tags": plan.algorithm_tags})
+                    round_idx += 1  # while 循环需显式递增（原 for 由迭代器处理）
                     continue
                 except Exception as e:  # noqa: BLE001
                     trace.append({"state": "REFINED", "round": round_idx, "warn": f"refine failed: {e}"})
@@ -256,7 +260,8 @@ class SolvePipeline:
                     self.client, problem, plan, cand, first_fail, round_idx,
                 )
                 if fixed_code and fixed_code != cand.code:
-                    return Solution(code=fixed_code, temperature=cand.temperature, gen_mode=GenMode.SLOW)
+                    return Solution(code=fixed_code, language=cand.language,
+                                    temperature=cand.temperature, gen_mode=GenMode.SLOW)
                 return cand
 
             try:
@@ -265,6 +270,7 @@ class SolvePipeline:
             except Exception as e:  # noqa: BLE001
                 trace.append({"state": State.REFLECTED, "round": round_idx, "warn": f"reflect failed: {e}"})
                 break
+            round_idx += 1
 
         final = pool[0]
         self._dump_trace(problem.id, trace, plan, final)
