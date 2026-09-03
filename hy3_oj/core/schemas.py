@@ -16,6 +16,7 @@ SCHEMA_VERSION = "0.1"
 class Source(str, Enum):
     CODECONTESTS = "codecontests"
     LIVECODEBENCH = "livecodebench"
+    EXTERNAL = "external"  # 用户自带题目（md/txt，见 core.problem_io）
 
 
 class Language(str, Enum):
