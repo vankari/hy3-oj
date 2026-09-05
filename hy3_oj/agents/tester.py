@@ -133,5 +133,12 @@ def differential_mismatches(
     mismatches = []
     for inp, c, b in zip(inputs, cand, brute):
         if not compare_output(b, c):
-            mismatches.append({"input": inp[:120], "candidate": c[:120], "brute": b[:120]})
+            # c/b 可能为 None（执行失败/超时）：compare_output 判不一致，
+            # 但记录时不能再切片，否则 TypeError（生产踩过）
+            mismatches.append({
+                "input": inp[:120],
+                "candidate": (c or "")[:120],
+                "brute": (b or "")[:120],
+                "no_output": c is None or b is None,  # 标记：无输出（不可作为"答案错误"证据）
+            })
     return mismatches

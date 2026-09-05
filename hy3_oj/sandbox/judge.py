@@ -11,8 +11,14 @@ from hy3_oj.core.schemas import Verdict
 FLOAT_TOL = 1e-6
 
 
-def compare_output(expected: str, actual: str, float_tol: float = FLOAT_TOL) -> bool:
-    """输出比对：trim 后精确比较；失败则按浮点容差逐 token 重比。"""
+def compare_output(expected: str | None, actual: str | None, float_tol: float = FLOAT_TOL) -> bool:
+    """输出比对：trim 后精确比较；失败则按浮点容差逐 token 重比。
+
+    None 表示"执行失败/无输出"（如超时、进程被杀），一律判为不一致而非崩溃——
+    生产环境里暴力解对拍时 run_stdout 可能返回 None（tester.gen_brute_force 踩过）。
+    """
+    if expected is None or actual is None:
+        return False
     if expected.strip() == actual.strip():
         return True
     exp_toks, act_toks = expected.split(), actual.split()

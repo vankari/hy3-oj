@@ -34,7 +34,16 @@ def summarize_by_difficulty(
     def agg(pairs: list[tuple[dict, dict | None]]) -> dict:
         n = len(pairs)
         if not n:
-            return {"n": 0}
+            # 空桶也必须返回完整字段（否则 render_markdown 取 overall['answer_acc'] 会 KeyError）
+            return {
+                "n": 0, "reviewed": 0, "answer_passed": 0, "answer_acc": 0.0,
+                "process_ok": 0, "process_acc": 0.0,
+                "no_fail_step": 0, "no_fail_step_rate": 0.0,
+                "lucky_convictions": 0, "lucky_rate_of_ac": 0.0,
+                "process_suspects": 0, "avg_rounds_of_passed": 0.0, "avg_process_score": 0.0,
+                "step_pass": {st: {"passed": 0, "total": 0, "rate": 0.0} for st in STEPS},
+                "error_types": {},
+            }
         answered = sum(1 for s, _ in pairs if s.get("passed"))
         # 无审查记录或审查失败（缺 process_score）的题不计入过程类指标分母
         reviewed = [(s, r) for s, r in pairs if r and "process_score" in r]
@@ -81,14 +90,16 @@ def summarize_by_difficulty(
     all_pairs = [p for pairs in rows.values() for p in pairs]
     overall = agg(all_pairs)
 
-    # 能力临界点：相邻档答案正确率最大跌幅（任务书 R8：指出表现明显下降的难度区间）
+    # 能力临界点：**实际存在的**相邻档之间的跌幅（任务书 R8：指出表现明显下降的难度区间）
+    # 注意：按 BUCKETS 顺序取存在的档两两比较，缺 medium 时仍能算出 easy→hard 跌幅
+    # （旧实现按固定 (easy,medium)/(medium,hard) 配对，缺档即丢失关键洞察）。
+    present = [b for b in BUCKETS if buckets.get(b, {}).get("n")]
     drops = []
-    for a, b in zip(BUCKETS, BUCKETS[1:]):
-        ra = buckets.get(a, {}).get("answer_acc")
-        rb = buckets.get(b, {}).get("answer_acc")
-        if ra is not None and rb is not None and buckets.get(a, {}).get("n") and buckets.get(b, {}).get("n"):
-            drops.append({"from": a, "to": b, "answer_drop_pt": (ra - rb) * 100,
-                          "from_acc": ra, "to_acc": rb})
+    for a, b in zip(present, present[1:]):
+        ra = buckets[a]["answer_acc"]
+        rb = buckets[b]["answer_acc"]
+        drops.append({"from": a, "to": b, "answer_drop_pt": (ra - rb) * 100,
+                      "from_acc": ra, "to_acc": rb})
     return {
         "overall": overall,
         "buckets": buckets,

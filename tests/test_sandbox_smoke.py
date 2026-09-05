@@ -21,6 +21,17 @@ def test_compare_output_token_mismatch() -> None:
     assert not compare_output("1 2", "1 2 3")
 
 
+def test_compare_output_none_is_safe() -> None:
+    """None（执行失败/超时无输出）必须判不一致而非崩溃。
+
+    生产 bug：暴力解对拍时 run_stdout 返回 None 会让 gen_brute_force 抛
+    AttributeError，整个差分预筛失效（tester 单测暴露）。
+    """
+    assert not compare_output("6\n", None)
+    assert not compare_output(None, "6\n")
+    assert not compare_output(None, None)
+
+
 def test_classify() -> None:
     assert classify(exit_code=0, timed_out=False, compile_failed=True) == Verdict.CE
     assert classify(exit_code=0, timed_out=True, compile_failed=False) == Verdict.TLE

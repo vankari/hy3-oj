@@ -16,11 +16,17 @@ docker = pytest.importorskip("docker")
 def executor():
     from hy3_oj.sandbox.docker_executor import DockerExecutor
 
-    ex = DockerExecutor(load_config())
-    if not ex.ping():
-        pytest.skip("Docker Desktop 未启动")
     try:
+        ex = DockerExecutor(load_config())
+    except docker.errors.DockerException as e:
+        # Docker 不可用时 skip 而非 error：区分"环境不满足"与"代码错误"
+        pytest.skip(f"Docker 不可用（{type(e).__name__}）：请启动 Docker Desktop")
+    try:
+        if not ex.ping():
+            pytest.skip("Docker Desktop 未启动")
         ex._client.images.get("python:3.11-slim")
+    except docker.errors.DockerException as e:
+        pytest.skip(f"Docker 守护进程异常（{type(e).__name__}）：请重启 Docker Desktop")
     except docker.errors.ImageNotFound:
         pytest.skip("镜像 python:3.11-slim 未拉取（docker pull python:3.11-slim）")
     yield ex

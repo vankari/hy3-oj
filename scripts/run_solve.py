@@ -10,6 +10,7 @@ import asyncio
 import json
 from pathlib import Path
 
+from hy3_oj.core.checkpoint import GracefulInterrupt, StageCheckpoint
 from hy3_oj.core.config import load_config
 from hy3_oj.core.pipeline import SolvePipeline
 from hy3_oj.data.subset import load_subset
@@ -36,10 +37,15 @@ async def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     lock = asyncio.Lock()
 
+    gi = GracefulInterrupt()
+
     async def run_one(i: int, p) -> None:
+        if gi.stopped:
+            return  # 已请求中断：不再开新题，已落盘结果保留
         async with sem:
             try:
                 rec = await pipeline.solve(p)
+                StageCheckpoint.clear(p.id, cfg["eval"]["runs_dir"])  # 完成后清检查点
             except Exception as e:  # noqa: BLE001
                 rec = {"problem_id": p.id, "difficulty": p.difficulty, "passed": False,
                        "error": f"{type(e).__name__}: {e}"}
@@ -48,7 +54,10 @@ async def main() -> None:
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
                 print(f"[{i}/{len(todo)}] {p.id} ({p.difficulty}): {'PASS' if rec['passed'] else 'FAIL'} rounds={rec.get('rounds', '-')}")
 
-    await asyncio.gather(*(run_one(i, p) for i, p in enumerate(todo, 1)))
+    with gi:  # 协作式中断：Ctrl+C 后不再开新题，已落盘结果全部保留
+        await asyncio.gather(*(run_one(i, p) for i, p in enumerate(todo, 1)))
+    if gi.stopped:
+        print("\n[中断] 已收到停止信号：不再开始新题，已完成结果已落盘（重跑自动续跑）。")
     await pipeline.client.close()
     pipeline.executor.close()
 
