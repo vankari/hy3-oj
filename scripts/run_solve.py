@@ -7,6 +7,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
+
+# Windows 控制台默认 GBK，重配置为 utf-8 避免 print 中文/特殊符号崩溃
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+except Exception:  # noqa: BLE001
+    pass
 import json
 from pathlib import Path
 
@@ -23,7 +32,12 @@ async def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--concurrency", type=int, default=2, help="闭环单题 token 消耗大，默认低并发")
+    ap.add_argument("--lang", choices=["py", "cpp"], default=None,
+                    help="显式指定语言；不指定则自动（优先 Python3，失败后可诊断是否建议 C++）")
     args = ap.parse_args()
+
+    from hy3_oj.core.schemas import Language
+    target_lang = {"py": Language.PYTHON3, "cpp": Language.CPP17}.get(args.lang)
 
     cfg = load_config()
     problems = load_subset(args.subset)[: args.limit]
@@ -44,7 +58,7 @@ async def main() -> None:
             return  # 已请求中断：不再开新题，已落盘结果保留
         async with sem:
             try:
-                rec = await pipeline.solve(p)
+                rec = await pipeline.solve(p, language=target_lang)
                 StageCheckpoint.clear(p.id, cfg["eval"]["runs_dir"])  # 完成后清检查点
             except Exception as e:  # noqa: BLE001
                 rec = {"problem_id": p.id, "difficulty": p.difficulty, "passed": False,
@@ -52,7 +66,13 @@ async def main() -> None:
             async with lock:
                 with open(out_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                print(f"[{i}/{len(todo)}] {p.id} ({p.difficulty}): {'PASS' if rec['passed'] else 'FAIL'} rounds={rec.get('rounds', '-')}")
+                tag = "PASS" if rec["passed"] else "FAIL"
+                lang = rec.get("language_used")
+                advice = rec.get("language_advice")
+                line = f"[{i}/{len(todo)}] {p.id} ({p.difficulty}): {tag} rounds={rec.get('rounds', '-')} lang={lang}"
+                if advice:
+                    line += f"  | {advice}"
+                print(line)
 
     with gi:  # 协作式中断：Ctrl+C 后不再开新题，已落盘结果全部保留
         await asyncio.gather(*(run_one(i, p) for i, p in enumerate(todo, 1)))

@@ -53,8 +53,12 @@ class SolvePipeline:
         self.trace_dir = Path(config["eval"]["runs_dir"]) / "trace"
         self.trace_dir.mkdir(parents=True, exist_ok=True)
 
-    async def solve(self, problem: Problem) -> dict:
-        """闭环解题主流程。返回结果 dict（passed/rounds/code/trace_file）。"""
+    async def solve(self, problem: Problem, language: Language | None = None) -> dict:
+        """闭环解题主流程。返回结果 dict（passed/rounds/code/trace_file/language_used/language_advice）。
+
+        language: 显式指定 Language.PYTHON3 / Language.CPP17 则全程锁定该语言且不自动兜底；
+        为 None 则自动模式（优先 Python3，失败后再诊断是否建议 C++17）。
+        """
         trace: list[dict] = []
         solve_cfg = self.config["solve"]
         is_hard = problem.difficulty == "hard"
@@ -134,6 +138,7 @@ class SolvePipeline:
             sols = await coder.generate(
                 self.client, problem, one_plan, k=k_i,
                 temperatures=self.temperatures, mode=GenMode.FAST,
+                language=language or Language.PYTHON3,
             )
             for s in sols:
                 s.plan_ref = f"plan{p_i}"
@@ -200,6 +205,7 @@ class SolvePipeline:
                 self._dump_trace(problem.id, trace, plan, winner)
                 return {"problem_id": problem.id, "difficulty": problem.difficulty,
                         "passed": True, "rounds": round_idx, "code": winner.code,
+                        "language_used": winner.language.value,
                         "trace_file": str(self.trace_dir / f"{self._safe_name(problem.id)}.jsonl")}
 
             # C++17 兜底：Python 路径已到最后一轮仍失败时，改用 C++17 再战一轮
@@ -210,6 +216,7 @@ class SolvePipeline:
                 round_idx >= max_rounds
                 and cpp_enabled
                 and not used_cpp
+                and language is None  # 显式指定语言时不自动兜底
                 and problem.difficulty in cpp_only_diff
                 and not is_call_based_problem(problem)
             ):
@@ -226,7 +233,17 @@ class SolvePipeline:
                 except Exception as e:  # noqa: BLE001
                     trace.append({"state": "CPP_FALLBACK", "warn": f"cpp fallback failed: {e}"})
 
-            # refine：连续失败（round_idx>=1）→ 重规划换范式再生成，整池替换
+            # 记录本轮历史最优解（按通过测试点数）：refine 不得丢弃进展
+            # （教训：整池替换会把"已通过 96/102"的接近解丢掉换新解，
+            #   导致 easy/medium 的接近题反复回到起点——513_A/709_D 实测）
+            best_cand: Solution | None = None
+            best_pass = -1
+            for cand, results in zip(pool, judged):
+                n_pass = sum(1 for r in results if r.verdict == Verdict.AC)
+                if n_pass > best_pass:
+                    best_cand, best_pass = cand, n_pass
+
+            # refine：连续失败（round_idx>=1）→ 重规划换范式再生成
             if round_idx >= 1 and plan is not None:
                 first_fail = next(r for r in judged[0] if r.verdict != Verdict.AC)
                 try:
@@ -244,10 +261,14 @@ class SolvePipeline:
                         "constraints": f"{problem.constraints}\n\n{replan_prompt_note}".strip()
                     })
                     plan = await planner.plan(self.client, new_plan_problem)
-                    pool = await coder.generate(self.client, problem, plan, k=2,
-                                                temperatures=[0.4, 0.7], mode=GenMode.FAST)
+                    new_pool = await coder.generate(self.client, problem, plan, k=2,
+                                                    temperatures=[0.4, 0.7], mode=GenMode.FAST,
+                                                    language=language or (best_cand.language if best_cand else Language.PYTHON3))
+                    # 保留历史最优解一并进入下一轮，避免进展被丢弃
+                    pool = new_pool + ([best_cand] if best_cand is not None else [])
                     trace.append({"state": "REFINED", "round": round_idx,
-                                  "new_tags": plan.algorithm_tags})
+                                  "new_tags": plan.algorithm_tags,
+                                  "kept_best_pass": best_pass})
                     round_idx += 1  # while 循环需显式递增（原 for 由迭代器处理）
                     continue
                 except Exception as e:  # noqa: BLE001
@@ -274,8 +295,30 @@ class SolvePipeline:
 
         final = pool[0]
         self._dump_trace(problem.id, trace, plan, final)
+        # 自动模式下，失败后用末轮 verdict 分布诊断"语言/性能问题 vs 算法问题"
+        language_advice = ""
+        if language is None:
+            from collections import Counter
+
+            c = Counter(r.verdict for r in judged)
+            n = sum(c.values()) or 1
+            tle, re_, wa = c.get(Verdict.TLE, 0), c.get(Verdict.RE, 0), c.get(Verdict.WA, 0)
+            if used_cpp:
+                language_advice = "已尝试 Python 与 C++ 均失败，疑似算法/题意问题（非语言原因）"
+            elif tle / n > 0.3:
+                language_advice = (f"建议重试并指定语言 C++17（--lang cpp）：末轮主要为 TLE({tle}/{n})，"
+                                   "疑似 Python 性能瓶颈，C++ 更可能通过")
+            elif re_ / n > 0.3:
+                language_advice = (f"建议重试并指定语言 C++17（--lang cpp）：末轮主要为 RE({re_}/{n})，"
+                                   "疑似递归深度/语言特性，C++ 更稳")
+            elif wa / n >= 0.3:
+                language_advice = f"算法实现问题（末轮主要为 WA({wa}/{n})），C++ 无法改善"
+            else:
+                language_advice = "混合失败（WA+RE/TLE），疑似算法主体错误"
         return {"problem_id": problem.id, "difficulty": problem.difficulty,
                 "passed": False, "rounds": max_rounds, "code": final.code,
+                "language_used": final.language.value,
+                "language_advice": language_advice,
                 "trace_file": str(self.trace_dir / f"{self._safe_name(problem.id)}.jsonl")}
 
     @staticmethod

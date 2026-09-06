@@ -117,6 +117,17 @@ def page_solve() -> None:
     for w in warnings:
         st.warning(w, icon="⚠️")
 
+    lang_opt = st.radio("解题语言", ["自动（优先 Python3）", "Python3", "C++17"],
+                        horizontal=True, help="自动模式：优先 Python3；若失败且疑为性能/递归问题，会建议改用 C++17")
+    lang_map = {"自动（优先 Python3）": None, "Python3": "py", "C++17": "cpp"}
+    target_lang = None
+    if lang_map[lang_opt] == "py":
+        from hy3_oj.core.schemas import Language
+        target_lang = Language.PYTHON3
+    elif lang_map[lang_opt] == "cpp":
+        from hy3_oj.core.schemas import Language
+        target_lang = Language.CPP17
+
     col1, col2, col3 = st.columns([1, 1, 2])
     with col1:
         run = st.button("🚀 开始解题", type="primary", use_container_width=True)
@@ -128,7 +139,7 @@ def page_solve() -> None:
 
     if run:
         st.session_state.pop("_stop", None)
-        _run_solve(problem, do_explain)
+        _run_solve(problem, do_explain, language=target_lang)
 
     rec = _load_result(problem.id)
     if rec and not run:
@@ -136,8 +147,8 @@ def page_solve() -> None:
         _render_result(rec)
 
 
-def _run_solve(problem, do_explain: bool) -> None:
-    """执行解题全流程，分步展示进度。"""
+def _run_solve(problem, do_explain: bool, language=None) -> None:
+    """执行解题全流程，分步展示进度。language: None=自动 / PYTHON3 / CPP17。"""
     try:
         pipeline, cfg = _lazy_pipeline()
     except Exception as e:  # noqa: BLE001
@@ -154,7 +165,7 @@ def _run_solve(problem, do_explain: bool) -> None:
         t0 = time.time()
         try:
             # Streamlit 同步上下文：用 asyncio.run 驱动内部异步管线
-            result = asyncio.run(pipeline.solve(problem))
+            result = asyncio.run(pipeline.solve(problem, language=language))
         except Exception as e:  # noqa: BLE001
             st.error(f"解题失败：{type(e).__name__}: {e}")
             return
@@ -250,6 +261,11 @@ def _render_result(rec: dict) -> None:
     with t_judge:
         passed = rec.get("passed")
         st.markdown(f"### {'✅ 全部测试点通过' if passed else '❌ 未通过'}")
+        lang = rec.get("language_used")
+        if lang:
+            st.caption(f"解题语言：{lang}")
+        if rec.get("language_advice"):
+            st.info(f"💡 {rec['language_advice']}")
         if rec.get("error"):
             st.error(rec["error"])
 
