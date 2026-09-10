@@ -6,11 +6,11 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import Optional, Literal, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field, model_validator
 
-SCHEMA_VERSION = "0.1"
+SCHEMA_VERSION = "0.4"
 
 
 class Source(str, Enum):
@@ -67,7 +67,15 @@ class TestCase(BaseModel):
     input: str
     expected_output: Optional[str] = None  # AI 生成用例可能无标答（靠对拍）
     is_ai_generated: bool = False
+    is_boundary: bool = False  # 边界/极值/特殊结构用例：判题走差分对拍，不预填 bf 标答
     validator_ref: Optional[str] = None
+
+
+class JudgeSpec(BaseModel):
+    time_limit_s: float = Field(gt=0, le=60)
+    memory_mb: int = Field(gt=0, le=8192)
+    checker: Optional[Literal["integer_decomposition"]] = None
+    tests_complete: bool = False
 
 
 class Problem(BaseModel):
@@ -83,6 +91,15 @@ class Problem(BaseModel):
     private_tests: list[TestCase] = Field(default_factory=list)
     generated_tests: list[TestCase] = Field(default_factory=list)
     reference_solutions: list[str] = Field(default_factory=list)  # 官方参考解（bug 注入验证用）
+    judge: Optional[JudgeSpec] = None
+
+    @model_validator(mode="after")
+    def validate_complete_tests(self):
+        if self.judge and self.judge.tests_complete:
+            tests = self.public_tests + self.private_tests + self.generated_tests
+            if not tests or any(t.expected_output is None for t in tests):
+                raise ValueError("固定测试集必须非空，并为每个测试提供标准答案")
+        return self
 
 
 class Plan(BaseModel):
@@ -138,3 +155,55 @@ class ProcessReview(BaseModel):
     error_type: Optional[ProcessErrorType] = None
     lucky_pass_flags: list[str] = Field(default_factory=list)  # 蒙对检测命中项
     process_score: float = 0.0  # 0~1 过程正确性得分
+    explanation_sha256: Optional[str] = None  # 绑定被审查的题解正文，修改后须重审
+
+
+class ReviewMaterial(BaseModel):
+    explanation: str
+    trace_events: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ProcessStatus(str, Enum):
+    PASSED = "passed"
+    FAILED = "failed"
+    PENDING = "pending"
+    ERROR = "error"
+
+
+class CombinedStatus(str, Enum):
+    BOTH_PASSED = "both_passed"
+    ANSWER_ONLY = "answer_only"
+    PROCESS_ONLY = "process_only"
+    BOTH_FAILED = "both_failed"
+    PENDING = "pending"
+
+
+class Assessment(BaseModel):
+    """判题结果与过程结论分开保存，组合状态不反向修改任一判定。"""
+    answer_passed: Optional[bool]
+    process_status: ProcessStatus
+
+    @computed_field
+    @property
+    def combined_status(self) -> CombinedStatus:
+        if self.answer_passed is None or self.process_status in (ProcessStatus.PENDING, ProcessStatus.ERROR):
+            return CombinedStatus.PENDING
+        if self.answer_passed:
+            return CombinedStatus.BOTH_PASSED if self.process_status == ProcessStatus.PASSED else CombinedStatus.ANSWER_ONLY
+        return CombinedStatus.PROCESS_ONLY if self.process_status == ProcessStatus.PASSED else CombinedStatus.BOTH_FAILED
+
+
+class ConversationMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = ""
+    meta: dict[str, Any] = Field(default_factory=dict)  # 兼容已有解题/批量结果载荷
+
+
+class Conversation(BaseModel):
+    version: str = SCHEMA_VERSION
+    id: str = Field(pattern=r"^[a-zA-Z0-9_-]+$")
+    title: str
+    created_at: float
+    updated_at: float
+    messages: list[ConversationMessage] = Field(default_factory=list)
+    status: Literal["ready", "running", "error"] = "ready"

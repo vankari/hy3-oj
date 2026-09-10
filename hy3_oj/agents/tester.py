@@ -34,15 +34,18 @@ def _extract_list(text: str) -> list:
 
 
 async def gen_tests(client: Hy3Client, problem: Problem, n: int = 5) -> list[TestCase]:
-    """生成 n 个边界测试用例（仅输入；期望输出靠暴力对拍产生）。
+    """生成 n 个**边界**测试用例（仅输入；期望输出不预填，判题走暴力差分对拍）。
 
-    用例必须小规模：暴力参考解也要在这些输入上运行（差分对拍的前提）。
+    只生成最小规模/极值/特殊结构等边界输入（小规模，暴力解也能跑），
+    普通随机覆盖用例请交给 gen_bf_tests（用暴力解生成标答）。
     """
     samples = "\n".join(f"输入：\n{t.input[:200]}" for t in problem.samples[:2])
     user = (
         f"题目：\n{problem.statement[:4000]}\n\n约束：{problem.constraints or '见题面'}\n\n样例输入格式：\n{samples}\n\n"
-        f"生成 {n} 个**小规模**边界测试用例的**输入**（严格满足输入约束格式，覆盖：最小规模、"
-        "极值、特殊结构；规模要小，O(2^n) 暴力解也能秒过）。输出 JSON 数组：[{\"input\": \"...\"}, ...]，不要输出解释。"
+        f"生成 {n} 个**小规模边界**测试用例的**输入**（严格满足输入约束格式，覆盖：最小规模、"
+        "极值、特殊结构、退化/空等边界情况；规模要小，O(2^n) 暴力解也能秒过）。"
+        "注意：只生成边界/极值/特殊结构类输入，不要生成普通随机覆盖用例。"
+        "输出 JSON 数组：[{\"input\": \"...\"}, ...]，不要输出解释。"
     )
     try:
         r = await client.chat(
@@ -56,10 +59,72 @@ async def gen_tests(client: Hy3Client, problem: Problem, n: int = 5) -> list[Tes
 
     tests = []
     for it in items:
-        inp = str(it.get("input", "")).strip()
+        if not isinstance(it, dict) or not isinstance(it.get("input"), str):
+            continue
+        inp = it["input"].strip()
         if inp:  # 基础自校验：非空即收（更严的格式校验可后接正则）
             tests.append(TestCase(input=inp + "\n" if not inp.endswith("\n") else inp,
-                                  expected_output=None, is_ai_generated=True))
+                                  expected_output=None, is_ai_generated=True,
+                                  is_boundary=True))  # 边界用例：判题走差分对拍，不预填标答
+    return tests[:n]
+
+
+async def gen_bf_tests(
+    client: Hy3Client, problem: Problem, executor: DockerExecutor, brute_code: str, n: int = 8
+) -> list[TestCase]:
+    """生成 n 个**非边界**普通测试用例，并用暴力解（bf oracle）跑出 expected_output 填标答。
+
+    这些用例判题时走标准输出对比，标答由暴力解保证正确性，杜绝"无标答放水"。
+    自校验：暴力解必须在 time_limit 内产出非空输出，否则该用例不可靠、丢弃不入库。
+    """
+    samples = "\n".join(f"输入：\n{t.input[:200]}" for t in problem.samples[:2])
+    user = (
+        f"题目：\n{problem.statement[:4000]}\n\n约束：{problem.constraints or '见题面'}\n\n样例输入格式：\n{samples}\n\n"
+        f"生成 {n} 个**小规模、非边界**的随机/覆盖性测试用例输入（严格满足输入格式，"
+        "规模适中、O(n^2) 内可解、覆盖多种普通数据结构与流程，不要极值或特殊退化结构）。"
+        "输出 JSON 数组：[{\"input\": \"...\"}, ...]，不要输出解释。"
+    )
+    try:
+        r = await client.chat(
+            [{"role": "system", "content": "你是竞赛出题人，只输出 JSON 数组。"},
+             {"role": "user", "content": user}],
+            mode=GenMode.FAST, temperature=0.4, max_tokens=4096, stage="test_gen_bf",
+        )
+        items = _extract_list(r.content)
+    except Exception:  # noqa: BLE001
+        return []
+
+    inputs = []
+    for it in items:
+        if not isinstance(it, dict) or not isinstance(it.get("input"), str):
+            continue
+        inp = it["input"].strip()
+        if inp:
+            inputs.append(inp + "\n" if not inp.endswith("\n") else inp)
+    if not inputs:
+        return []
+
+    # 用暴力解跑出标答（bf 即 oracle，保证判题正确性）
+    import asyncio
+
+    try:
+        outs = await asyncio.to_thread(executor.run_stdout, Solution(code=brute_code), inputs)
+    except Exception as e:  # noqa: BLE001
+        log.warning("bf 跑测试输入失败 %s: %s", problem.id, e)
+        return []
+    if outs is None or len(outs) < len(inputs):
+        return []
+
+    tests = []
+    for inp, out in zip(inputs, outs):
+        if out is None or out.strip() == "":
+            continue  # bf 无输出：不可靠，丢弃
+        tests.append(TestCase(
+            input=inp,
+            expected_output=out if out.endswith("\n") else out + "\n",
+            is_ai_generated=True,
+            is_boundary=False,  # 普通用例：标答由 bf 生成，走标准对比
+        ))
     return tests[:n]
 
 
@@ -103,14 +168,14 @@ async def gen_brute_force(
     if problem.samples:
         try:
             outs = await asyncio.to_thread(
-                executor.run_stdout, Solution(code=code), [t.input for t in problem.samples[:3]]
+                executor.run_stdout, Solution(code=code), [t.input for t in problem.samples]
             )
         except Exception as e:  # noqa: BLE001
             log.warning("暴力解验证执行失败 %s: %s", problem.id, e)
             return None
-        if outs is None or len(outs) < len(problem.samples[:3]):
+        if outs is None or len(outs) < len(problem.samples):
             return None
-        for t, out in zip(problem.samples[:3], outs):
+        for t, out in zip(problem.samples, outs):
             if not compare_output(t.expected_output or "", out):
                 log.info("暴力解样例验证未过，弃用: %s", problem.id)
                 return None

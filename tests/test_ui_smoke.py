@@ -14,13 +14,15 @@ def test_import_app() -> None:
     assert hasattr(mod, "main")
 
 
-def test_pages_registered() -> None:
-    """四个页面均已注册且可调用。"""
-    from hy3_oj.ui import streamlit_app as app
+def test_chat_page_starts() -> None:
+    """当前单一对话页面能实际渲染，无需调用模型。"""
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
 
-    assert set(app.PAGES) == {"解题工作台", "评测看板", "人类反馈", "设置"}
-    for name, fn in app.PAGES.items():
-        assert callable(fn), name
+    src = Path(__file__).resolve().parents[1] / "hy3_oj" / "ui" / "streamlit_app.py"
+    app = AppTest.from_file(str(src)).run(timeout=15)
+    assert not app.exception
+    assert len(app.chat_input) == 1
 
 
 def test_result_roundtrip(tmp_path, monkeypatch) -> None:
@@ -41,6 +43,55 @@ def test_result_filename_sanitized(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(app, "UI_DIR", tmp_path)
     app._save_result({"problem_id": "leetcode:3265 A/B", "code": "x", "ts": 0.0})
     assert app._load_result("leetcode:3265 A/B") is not None
+
+
+def test_result_rejects_invalid_or_colliding_record(tmp_path, monkeypatch) -> None:
+    from hy3_oj.ui import streamlit_app as app
+
+    monkeypatch.setattr(app, "UI_DIR", tmp_path)
+    app._save_result({"problem_id": "a/b", "code": "x"})
+    assert app._load_result("a:b") is None
+    for content in ("{", "[]"):
+        (tmp_path / "broken.json").write_text(content, encoding="utf-8")
+        assert app._load_result("broken") is None
+
+
+def test_worker_only_updates_result_box(monkeypatch) -> None:
+    from hy3_oj.ui import streamlit_app as app
+
+    class NoSessionAccess:
+        def __setattr__(self, name, value):
+            raise AssertionError("worker must not write Streamlit session state")
+
+    monkeypatch.setattr(app.st, "session_state", NoSessionAccess())
+    monkeypatch.setattr(app, "run_app", lambda state: state["box"].update(result={"code": "x"}))
+    box = {}
+    app._run_graph_thread("text", None, None, box)
+    assert box == {"result": {"code": "x"}, "done": True}
+
+
+def test_review_failure_visible_even_when_tests_pass():
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    from hy3_oj.core.assessment import explanation_hash
+    from hy3_oj.core.schemas import ReviewStep
+
+    src = Path(__file__).resolve().parents[1] / "hy3_oj" / "ui" / "streamlit_app.py"
+    app = AppTest.from_file(str(src)).run(timeout=15)
+    app.session_state["messages"] = [{"role": "assistant", "meta": {"result": {
+        "problem_id": "complexity-regression", "passed": True, "rounds": 1,
+        "language_used": "python3", "code": "for a in range(100): pass",
+        "review": {"process_score": 0.6, "error_step": "复杂度论证",
+                   "explanation_sha256": explanation_hash("candidate analysis"),
+                   "step_verdicts": [{"step": s.value, "passed": s != ReviewStep.COMPLEXITY_PROOF,
+                                      "evidence": "O(N^0.5) exceeds O(N^0.25)"} for s in ReviewStep]},
+        "explanation": "candidate analysis",
+    }}}]
+    app.run(timeout=15)
+    assert not app.exception
+    assert any("判题：AC" in e.value for e in app.markdown)
+    assert any("结果通过 · 过程有误" in e.value for e in app.caption)
+    assert any("$O(N^{0.5})$ exceeds $O(N^{0.25})$" in e.value for e in app.warning)
 
 
 def test_no_key_input_in_ui() -> None:

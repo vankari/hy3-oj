@@ -133,4 +133,4 @@ async def deep_analyze(client: Hy3Client, problem: Problem) -> str:
          {"role": "user", "content": user}],
         mode=GenMode.SLOW, temperature=0.6, max_tokens=8192, stage="deep_analysis",
     )
-    return r.content
+    return (r.content or r.reasoning or "").strip()

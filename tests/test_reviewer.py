@@ -6,6 +6,8 @@ v0.3：全部静态规则只产出候选信号（lucky_pass_signals），定罪�
 from __future__ import annotations
 
 import asyncio
+import json
+import pytest
 
 from hy3_oj.agents.reviewer import (
     _confirm_signals,
@@ -17,6 +19,73 @@ from hy3_oj.agents.reviewer import (
     special_case_signals,
 )
 from hy3_oj.core.schemas import Plan, Problem, Solution, Source, TestCase
+
+
+def _valid_response(fail=False):
+    from hy3_oj.core.schemas import ReviewStep, ProcessErrorType
+    return {"step_verdicts": [{"step": step.value,
+        "passed": not (fail and step == ReviewStep.COMPLEXITY_PROOF),
+        "evidence": "loop requires sqrt(N), exceeding N^(1/4)" if fail else "verified"}
+        for step in ReviewStep],
+        "error_step": ReviewStep.COMPLEXITY_PROOF.value if fail else None,
+        "error_type": ProcessErrorType.COMPLEXITY.value if fail else None,
+        "process_score": 0.6 if fail else 1.0}
+
+
+class ReplyClient:
+    def __init__(self, responses):
+        self.responses = iter(responses)
+        self.calls = []
+
+    async def chat(self, messages, **kwargs):
+        from types import SimpleNamespace
+        self.calls.append(list(messages))
+        return SimpleNamespace(content=json.dumps(next(self.responses), ensure_ascii=False))
+
+
+def test_inconsistent_review_retries_and_preserves_genuine_failure():
+    inconsistent = _valid_response(True)
+    inconsistent.update(error_step=None, error_type=None, process_score=1.0)
+    client = ReplyClient([inconsistent, _valid_response(True)])
+    result = asyncio.run(review(client, make_problem(), None, Solution(code="x"), "AC"))
+    assert len(client.calls) == 2
+    assert result.error_step.value == "复杂度论证"
+    assert result.process_score == 0.6
+
+
+def test_invalid_review_never_defaults_to_pass():
+    client = ReplyClient([{}, {}])
+    with pytest.raises(ValueError, match="不一致或不完整"):
+        asyncio.run(review(client, make_problem(), None, Solution(code="x"), "AC"))
+
+
+def test_active_reviewer_uses_yaml_template(monkeypatch):
+    from hy3_oj.agents import reviewer as module
+    monkeypatch.setitem(module._PROMPT, "system", "template-system")
+    client = ReplyClient([_valid_response()])
+    result = asyncio.run(review(client, make_problem(), None, Solution(code="x"), "AC"))
+    assert client.calls[0][0]["content"] == "template-system"
+    assert all(step.passed for step in result.step_verdicts)
+
+
+def test_reviewer_audits_explanation_without_rejudging():
+    from hy3_oj.core.schemas import ReviewMaterial
+    from hy3_oj.core.assessment import explanation_hash
+
+    class ForbiddenExecutor:
+        def __getattr__(self, name):
+            raise AssertionError("process reviewer must not execute tests")
+
+    material = ReviewMaterial(explanation="The proof claims that N^0.5 is faster than N^0.25.",
+                              trace_events=[{"state": "PLANNED", "approach": "count iterations"}])
+    client = ReplyClient([_valid_response(True)])
+    result = asyncio.run(review(client, make_problem(), None, Solution(code="x"),
+        "DO_NOT_USE_JUDGE_RESULT", executor=ForbiddenExecutor(), answer_passed=True, material=material))
+    prompt = client.calls[0][-1]["content"]
+    assert material.explanation in prompt
+    assert "count iterations" in prompt
+    assert "DO_NOT_USE_JUDGE_RESULT" not in prompt
+    assert result.explanation_sha256 == explanation_hash(material.explanation)
 
 
 def make_problem() -> Problem:

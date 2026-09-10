@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Hy3-OJ 依赖清单（pip 钉版，配套 environment.yml 使用）
 # 模型接入层：Hy3 API（OpenAI 兼容协议）
 openai==1.55.3
@@ -22,7 +23,8 @@ rich==13.9.4
 tqdm==4.67.1
 
 # Demo（后置启用）与测试
-streamlit==1.40.2
+streamlit==1.63.0
+langgraph==1.2.11
 pytest==8.3.4
 
 # 任务书 PDF 解析

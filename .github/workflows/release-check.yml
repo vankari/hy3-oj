@@ -1,0 +1,15 @@
+name: Release assets
+on: [push, pull_request]
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install markdown-it-py==4.2.0
+      - run: python scripts/audit_release.py
+      - run: python scripts/split_archive.py restore runs/releases/demo/manifest.json runs/release_audit/verified --verify-only

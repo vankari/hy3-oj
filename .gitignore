@@ -15,15 +15,21 @@ __pycache__/
 *.egg-info/
 
 # ---- 运行产物与数据缓存 ----
-runs/*
-!runs/*.md                  # 评测/消融报告属交付物，放行入库
-runs/llm_cache/
-runs/trace/
+# 所有层级的运行目录均忽略；正式文档在 docs/，只放行审核后的交付分片。
+**/runs/*
+!/runs/releases/
+/runs/releases/*
+!/runs/releases/demo/
+/runs/releases/demo/*
+!/runs/releases/demo/README.md
+!/runs/releases/demo/manifest.json
+!/runs/releases/demo/Hy3-OJ-demo.zip.[0-9][0-9][0-9]
 data/subsets/
 docs/_pdf_extract.txt
 
 # ---- 工具 ----
-.streamlit/
+.streamlit/*
+!.streamlit/config.toml
 .vscode/
 .idea/
 .codebuddy/

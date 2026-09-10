@@ -15,7 +15,8 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from hy3_oj.agents import reviewer
+from hy3_oj.agents import reviewer, explainer
+from hy3_oj.core.assessment import assess, load_review_material
 from hy3_oj.core.schemas import Plan, Problem, Solution
 from hy3_oj.llm.client import Hy3Client
 from hy3_oj.sandbox.docker_executor import DockerExecutor
@@ -122,7 +123,7 @@ async def run_reviews(
     executor: DockerExecutor | None = None,
     log: Callable[[str], None] = print,
 ) -> list[dict]:
-    """对闭环解全量跑 Reviewer（五段式审查 + AC 解蒙对探针），返回审查记录。"""
+    """生成或复用题解，再审查正文与轨迹；判题结果只用于组合状态。"""
     by_id = {r["problem_id"]: r for r in solve_records}
     targets = [p for p in problems if p.id in by_id and by_id[p.id].get("code")]
     done = {r["problem_id"] for r in load_jsonl(out)} if resume and Path(out).exists() else set()
@@ -133,8 +134,6 @@ async def run_reviews(
 
     own_client = client is None
     client = client or Hy3Client(cfg)
-    own_executor = executor is None
-    executor = executor or DockerExecutor(cfg)
 
     sem = asyncio.Semaphore(concurrency)
     lock = asyncio.Lock()
@@ -148,14 +147,22 @@ async def run_reviews(
         verdict_summary = ("AC（全部测试点通过）" if rec.get("passed")
                            else f"未通过（{rec.get('rounds', 0)} 轮修复后仍失败）")
         async with sem:
+            solution = Solution(code=rec["code"], language=rec.get("language_used") or "python3")
+            explanation = rec.get("explanation") or await explainer.explain(
+                client, p, solution, plan=plan, judge_summary=verdict_summary,
+                language_hint=solution.language.value,
+            )
             rev = await reviewer.review(
-                client, p, plan, Solution(code=rec["code"]), verdict_summary,
-                executor=executor, answer_passed=bool(rec.get("passed")),
+                client, p, plan, solution, "",
+                material=load_review_material(explanation, rec.get("trace_file", "")),
             )
         out_rec = {
             "problem_id": p.id,
             "difficulty": p.difficulty,
             "answer_passed": bool(rec.get("passed")),
+            "explanation": explanation,
+            "explanation_sha256": rev.explanation_sha256,
+            "assessment": assess(rec.get("passed"), rev, explanation).model_dump(mode="json"),
             "process_score": rev.process_score,
             "error_step": rev.error_step.value if rev.error_step else None,
             "error_type": rev.error_type.value if rev.error_type else None,
@@ -173,8 +180,6 @@ async def run_reviews(
     try:
         await asyncio.gather(*(one(i, p) for i, p in enumerate(todo, 1)))
     finally:
-        if own_executor:
-            executor.close()
         if own_client:
             await client.close()
     log(f"[review] 完成 {done_n} 题，耗时 {(time.time() - t0) / 60:.1f}min")

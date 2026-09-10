@@ -60,6 +60,17 @@ class SolvePipeline:
         为 None 则自动模式（优先 Python3，失败后再诊断是否建议 C++17）。
         """
         trace: list[dict] = []
+        trace_path = self.trace_dir / f"{self._safe_name(problem.id)}.jsonl"
+        trace_path.write_text("", encoding="utf-8")  # 清空，逐步追加供 UI 实时轮询
+        def emit(ev: dict) -> None:
+            """追加事件到内存列表并即时落盘一行（UI 可轮询增量展示）。"""
+            trace.append(ev)
+            with open(trace_path, "a", encoding="utf-8") as _f:
+                _f.write(json.dumps(ev, ensure_ascii=False, default=str) + "\n")
+        executor = self.executor.with_limits(problem.judge) if problem.judge else self.executor
+        if problem.judge:
+            emit({"state": "JUDGE_CONFIG", "judge": problem.judge.model_dump(),
+                  "tests": len(problem.public_tests + problem.private_tests + problem.generated_tests)})
         solve_cfg = self.config["solve"]
         is_hard = problem.difficulty == "hard"
         is_medium = problem.difficulty == "medium"
@@ -74,23 +85,25 @@ class SolvePipeline:
         top_k = max(1, int(solve_cfg.get("repair_top_k", 2)))
 
         # 0. 多解特判：题面提示答案不唯一 → LLM checker（参考解反向验证，不可信则回退精确比对）
-        checker_code: str | None = None
+        from hy3_oj.sandbox.checkers import checker_source
+        checker_code = checker_source(problem.judge.checker) if problem.judge and problem.judge.checker else None
         if (
-            solve_cfg.get("special_judge", True)
+            checker_code is None
+            and solve_cfg.get("special_judge", True)
             and special_judge.needs_special_judge(problem)
             and problem.reference_solutions
         ):
             try:
-                checker_code = await special_judge.get_checker(self.client, self.executor, problem)
-                trace.append({"state": "SPECIAL_JUDGE", "ok": checker_code is not None})
+                checker_code = await special_judge.get_checker(self.client, executor, problem)
+                emit({"state": "SPECIAL_JUDGE", "ok": checker_code is not None})
             except Exception as e:  # noqa: BLE001
-                trace.append({"state": "SPECIAL_JUDGE", "warn": f"special judge fallback: {e}"})
+                emit({"state": "SPECIAL_JUDGE", "warn": f"special judge fallback: {e}"})
 
         # 1. Parser（快思考结构化；失败则用原题面）
         try:
             problem = await parser.parse(self.client, problem)
         except Exception as e:  # noqa: BLE001
-            trace.append({"state": State.PARSED, "warn": f"parser fallback: {e}"})
+            emit({"state": State.PARSED, "warn": f"parser fallback: {e}"})
 
         # 2. hard 档慢思考深分析（自由文本，注入后续规划上下文）
         if problem.difficulty in solve_cfg.get("deep_analysis_difficulties", ["hard"]):
@@ -99,17 +112,17 @@ class SolvePipeline:
                 problem = problem.model_copy(update={
                     "constraints": f"{problem.constraints}\n\n深度分析：\n{analysis[:3000]}".strip()
                 })
-                trace.append({"state": "DEEP_ANALYSIS", "chars": len(analysis)})
+                emit({"state": "DEEP_ANALYSIS", "chars": len(analysis)})
             except Exception as e:  # noqa: BLE001
-                trace.append({"state": "DEEP_ANALYSIS", "warn": f"deep analysis fallback: {e}"})
+                emit({"state": "DEEP_ANALYSIS", "warn": f"deep analysis fallback: {e}"})
 
         # 3. Planner（快思考结构化；失败则空 plan 直出）
         try:
             plan: Plan | None = await planner.plan(self.client, problem)
-            trace.append({"state": State.PLANNED, "plan": plan.model_dump()})
+            emit({"state": State.PLANNED, "plan": plan.model_dump()})
         except Exception as e:  # noqa: BLE001
             plan = None
-            trace.append({"state": State.PLANNED, "warn": f"planner fallback: {e}"})
+            emit({"state": State.PLANNED, "warn": f"planner fallback: {e}"})
 
         # 4. Coder K 路采样（快思考，k 难度自适应）
         # 90+ 攻坚：medium/hard 档多 Plan 多样性——多算法范式分别采样，覆盖多种正确解
@@ -117,11 +130,11 @@ class SolvePipeline:
         if n_plans > 1:
             try:
                 plans = await planner.plan_diverse(self.client, problem, n=n_plans)
-                trace.append({"state": "PLAN_DIVERSE", "n": len(plans),
+                emit({"state": "PLAN_DIVERSE", "n": len(plans),
                               "tags": [p.algorithm_tags for p in plans]})
             except Exception as e:  # noqa: BLE001
                 plans = [plan] if plan else []
-                trace.append({"state": "PLAN_DIVERSE", "warn": f"diverse fallback: {e}"})
+                emit({"state": "PLAN_DIVERSE", "warn": f"diverse fallback: {e}"})
         else:
             plans = [plan] if plan else [None]
 
@@ -143,69 +156,127 @@ class SolvePipeline:
             for s in sols:
                 s.plan_ref = f"plan{p_i}"
             solutions.extend(sols)
-        trace.append({"state": State.GENERATED, "k": len(solutions), "difficulty": problem.difficulty,
+        emit({"state": State.GENERATED, "k": len(solutions), "difficulty": problem.difficulty,
                       "n_plans": n_plans_total, "k_main": k_main, "k_alt_each": k_alt_each})
 
-        # 5. Tester：小样例 + 暴力对拍 oracle（暴力解先过样例才可信）
+        # 5. Tester：边界用例 + 暴力对拍 oracle
+        #  · 边界用例（gen_tests）：极小/极值/特殊结构，判题走差分对拍，不预填标答
+        #  · 普通用例（gen_bf_tests）：一律用暴力解(bf)跑出 expected_output，标答正确有保障
         sample_tests = problem.samples or problem.public_tests[:2]
-        ai_tests = []
+        ai_tests: list = []
         brute = None
-        try:
-            ai_tests = await tester.gen_tests(self.client, problem, n=4)
-            if solve_cfg.get("brute_force_oracle", True):
-                brute = await tester.gen_brute_force(self.client, problem, self.executor)
-            trace.append({"state": "TEST_GEN", "n": len(ai_tests), "brute": brute is not None})
-        except Exception as e:  # noqa: BLE001
-            trace.append({"state": "TEST_GEN", "warn": f"tester fallback: {e}"})
+        if not (problem.judge and problem.judge.tests_complete):
+            try:
+                if solve_cfg.get("brute_force_oracle", True):
+                    brute = await tester.gen_brute_force(self.client, problem, executor)
+                boundary_tests = await tester.gen_tests(self.client, problem, n=4)
+                bf_tests = []
+                if brute:
+                    bf_tests = await tester.gen_bf_tests(
+                        self.client, problem, executor, brute, n=8)
+                ai_tests = boundary_tests + bf_tests
+                emit({"state": "TEST_GEN", "n_boundary": len(boundary_tests),
+                              "n_bf": len(bf_tests), "brute": brute is not None})
+            except Exception as e:  # noqa: BLE001
+                emit({"state": "TEST_GEN", "warn": f"tester fallback: {e}"})
+        else:
+            emit({"state": "TEST_GEN", "source": "provided", "skipped": True, "n_boundary": 0, "n_bf": 0, "brute": False})
 
         # 6. 预筛：样例精确比对（含特判）+ AI 小样例验证 → 综合得分取 top-k
         scored: list[tuple[int, int, Solution]] = []
         for sol in solutions:
             n_sample = 0
             if sample_tests:
-                results = await asyncio.to_thread(self.executor.execute, sol, sample_tests, checker_code)
+                results = await asyncio.to_thread(executor.execute, sol, sample_tests, checker_code)
                 n_sample = sum(1 for r in results if r.verdict == Verdict.AC)
             n_diff = 0
             if checker_code and ai_tests:
                 # 多解题：差分对拍会误罚"合法但不同"的输出，AI 用例改用 checker 验证
-                results_ai = await asyncio.to_thread(self.executor.execute, sol, ai_tests, checker_code)
+                results_ai = await asyncio.to_thread(executor.execute, sol, ai_tests, checker_code)
                 n_diff = sum(1 for r in results_ai if r.verdict == Verdict.AC)
             elif brute and ai_tests:
                 mismatches = await asyncio.to_thread(
-                    tester.differential_mismatches, self.executor, sol.code, brute,
+                    tester.differential_mismatches, executor, sol.code, brute,
                     [t.input for t in ai_tests],
                 )
                 n_diff = len(ai_tests) - len(mismatches)
             scored.append((n_sample, n_diff, sol))
         scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
         pool = [s for _, _, s in scored[:top_k]]
-        trace.append({"state": State.LOCAL_TESTED,
+        emit({"state": State.LOCAL_TESTED,
                       "scores": [[a, b] for a, b, _ in scored],
                       "pool": len(pool), "top_k": top_k})
 
         # 7. 全量判题 + top-k 并行修复闭环
-        all_tests = problem.public_tests + problem.private_tests + problem.generated_tests
+        # 官方测试集存在 → 仅用官方集（保持评测语义）；
+        # 外部粘贴题（无 public/private）→ 用 AI 用例判题，分两类：
+        #  · bf_tests（非边界）：标答由暴力解(bf oracle)生成，走标准输出对比，正确性保障
+        #  · boundary_tests（边界）：走"候选 vs 暴力解"差分对拍，不预填标答
+        std_tests = problem.public_tests + problem.private_tests + problem.generated_tests
+        if std_tests:
+            all_tests = std_tests
+            boundary_for_judge: list = []
+            bf_for_judge: list = []
+        else:
+            boundary_for_judge = [t for t in (ai_tests or []) if t.is_boundary]
+            bf_for_judge = [t for t in (ai_tests or []) if not t.is_boundary]
+            all_tests = boundary_for_judge + bf_for_judge
         used_cpp = False  # C++17 兜底只允许触发一次，避免无限循环
+
+        async def _judge(cand: Solution) -> list[JudgeResult]:
+            """判题：官方集/bf 标答用例走标准对比；边界用例走候选 vs 暴力解差分。"""
+            emit({"state": "JUDGE_STARTED", "round": round_idx,
+                  "language": cand.language.value, "code": cand.code})
+            res_std = await asyncio.to_thread(
+                executor.execute, cand, std_tests, checker_code)
+            res_bf = await asyncio.to_thread(
+                executor.execute, cand, bf_for_judge, checker_code)
+            res_boundary: list[JudgeResult] = []
+            if boundary_for_judge and brute:
+                mism = await asyncio.to_thread(
+                    tester.differential_mismatches, executor, cand.code, brute,
+                    [t.input for t in boundary_for_judge],
+                )
+                bad = {m["input"] for m in mism}
+                for t in boundary_for_judge:
+                    is_bad = t.input[:120] in bad
+                    res_boundary.append(JudgeResult(
+                        verdict=Verdict.WA if is_bad else Verdict.AC,
+                        failed_test=t if is_bad else None,
+                        diff_excerpt=("候选解与暴力解(bf)在边界用例上输出不一致" if is_bad else ""),
+                    ))
+            # 顺序对齐 all_tests = (std_tests) | (boundary_for_judge + bf_for_judge)
+            return res_std + res_boundary + res_bf
         # while 而非 for：C++ 兜底会重置 round_idx，for 循环的迭代器会覆盖该赋值
         # 导致 C++ 代码生成后从未被判题（v9 实测：CPP_FALLBACK 后无任何 JUDGED）
         round_idx = 0
         while round_idx <= max_rounds:
-            judged: list[list[JudgeResult]] = await asyncio.gather(*[
-                asyncio.to_thread(self.executor.execute, c, all_tests, checker_code) for c in pool
-            ])
+            judged: list[list[JudgeResult]] = await asyncio.gather(*[_judge(c) for c in pool])
             winner: Solution | None = None
             for ci, (cand, results) in enumerate(zip(pool, judged)):
                 verdicts = [r.verdict for r in results]
                 passed = bool(results) and all(v == Verdict.AC for v in verdicts)
-                trace.append({"state": State.JUDGED, "round": round_idx, "cand": ci,
-                              "passed": passed, "verdicts": [v.value for v in verdicts]})
+                emit({"state": State.JUDGED, "round": round_idx, "cand": ci,
+                              "passed": passed, "verdicts": [v.value for v in verdicts],
+                              "language": cand.language.value, "code": cand.code,
+                              "tests": [{"index": i, "verdict": r.verdict.value, "time_ms": r.time_ms,
+                                         "stderr": r.stderr[:400], "diff": r.diff_excerpt[:400],
+                                         "failed_input": r.failed_test.input[:500] if r.failed_test else None}
+                                        for i, r in enumerate(results)]})
                 if passed and winner is None:
                     winner = cand
             if winner is not None:
-                self._dump_trace(problem.id, trace, plan, winner)
+                emit({"state": "FINAL", "code": winner.code, "passed": True, "rounds": round_idx,
+                      "language_used": winner.language.value})
                 return {"problem_id": problem.id, "difficulty": problem.difficulty,
                         "passed": True, "rounds": round_idx, "code": winner.code,
                         "language_used": winner.language.value,
+                        "judge": problem.judge.model_dump() if problem.judge else None,
+                        "verification": ({"source": problem.source.value, "public": len(problem.public_tests),
+                            "private": len(problem.private_tests), "generated": len(problem.generated_tests),
+                            "total": len(all_tests), "passed": len(all_tests)}
+                            if problem.judge and problem.judge.tests_complete else None),
+                        "plan": plan.model_dump() if plan else None,
                         "trace_file": str(self.trace_dir / f"{self._safe_name(problem.id)}.jsonl")}
 
             # C++17 兜底：Python 路径已到最后一轮仍失败时，改用 C++17 再战一轮
@@ -227,11 +298,11 @@ class SolvePipeline:
                         temperatures=[0.2, 0.6], mode=GenMode.FAST, language=Language.CPP17,
                     )
                     pool = cpp_sols
-                    trace.append({"state": "CPP_FALLBACK", "k": len(cpp_sols)})
+                    emit({"state": "CPP_FALLBACK", "k": len(cpp_sols)})
                     round_idx = 0  # 重置轮数，给 C++ 一轮完整的判题+修复机会
                     continue
                 except Exception as e:  # noqa: BLE001
-                    trace.append({"state": "CPP_FALLBACK", "warn": f"cpp fallback failed: {e}"})
+                    emit({"state": "CPP_FALLBACK", "warn": f"cpp fallback failed: {e}"})
 
             # 记录本轮历史最优解（按通过测试点数）：refine 不得丢弃进展
             # （教训：整池替换会把"已通过 96/102"的接近解丢掉换新解，
@@ -266,16 +337,18 @@ class SolvePipeline:
                                                     language=language or (best_cand.language if best_cand else Language.PYTHON3))
                     # 保留历史最优解一并进入下一轮，避免进展被丢弃
                     pool = new_pool + ([best_cand] if best_cand is not None else [])
-                    trace.append({"state": "REFINED", "round": round_idx,
+                    emit({"state": "REFINED", "round": round_idx,
                                   "new_tags": plan.algorithm_tags,
                                   "kept_best_pass": best_pass})
                     round_idx += 1  # while 循环需显式递增（原 for 由迭代器处理）
                     continue
                 except Exception as e:  # noqa: BLE001
-                    trace.append({"state": "REFINED", "round": round_idx, "warn": f"refine failed: {e}"})
+                    emit({"state": "REFINED", "round": round_idx, "warn": f"refine failed: {e}"})
 
             # 并行修复池中全部候选
             async def fix_one(cand: Solution, results: list[JudgeResult]) -> Solution:
+                if not results:
+                    return cand  # 无测试点（外部题未解析出标准测试）→ 保持原样，避免 next() 在空序列抛 StopIteration
                 first_fail = next(r for r in results if r.verdict != Verdict.AC)
                 _reflection, fixed_code = await reflector.reflect(
                     self.client, problem, plan, cand, first_fail, round_idx,
@@ -287,20 +360,21 @@ class SolvePipeline:
 
             try:
                 pool = list(await asyncio.gather(*[fix_one(c, r) for c, r in zip(pool, judged)]))
-                trace.append({"state": State.REFLECTED, "round": round_idx, "pool": len(pool)})
+                emit({"state": State.REFLECTED, "round": round_idx, "pool": len(pool)})
             except Exception as e:  # noqa: BLE001
-                trace.append({"state": State.REFLECTED, "round": round_idx, "warn": f"reflect failed: {e}"})
+                emit({"state": State.REFLECTED, "round": round_idx, "warn": f"reflect failed: {e}"})
                 break
             round_idx += 1
 
         final = pool[0]
-        self._dump_trace(problem.id, trace, plan, final)
+        emit({"state": "FINAL", "code": final.code, "passed": False, "rounds": max_rounds,
+              "language_used": final.language.value})
         # 自动模式下，失败后用末轮 verdict 分布诊断"语言/性能问题 vs 算法问题"
         language_advice = ""
         if language is None:
             from collections import Counter
 
-            c = Counter(r.verdict for r in judged)
+            c = Counter(r.verdict for results in judged for r in results)
             n = sum(c.values()) or 1
             tle, re_, wa = c.get(Verdict.TLE, 0), c.get(Verdict.RE, 0), c.get(Verdict.WA, 0)
             if used_cpp:
@@ -318,7 +392,9 @@ class SolvePipeline:
         return {"problem_id": problem.id, "difficulty": problem.difficulty,
                 "passed": False, "rounds": max_rounds, "code": final.code,
                 "language_used": final.language.value,
+                "judge": problem.judge.model_dump() if problem.judge else None,
                 "language_advice": language_advice,
+                "plan": plan.model_dump() if plan else None,
                 "trace_file": str(self.trace_dir / f"{self._safe_name(problem.id)}.jsonl")}
 
     @staticmethod

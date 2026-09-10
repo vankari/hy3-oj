@@ -65,6 +65,28 @@ def test_gen_tests_handles_bad_json() -> None:
     assert asyncio.run(tester.gen_tests(client, make_problem())) == []
 
 
+def test_generators_skip_malformed_items() -> None:
+    reply = '[null, 42, "bad", [], {}, {"input": null}, {"input": 5}, {"input": "1\\n5"}]'
+    boundary = asyncio.run(tester.gen_tests(FakeClient(reply), make_problem()))
+    assert [t.input for t in boundary] == ["1\n5\n"]
+    ordinary = asyncio.run(tester.gen_bf_tests(
+        FakeClient(reply), make_problem(), FakeExecutor({"brute": ["5\n"]}), "brute"
+    ))
+    assert [t.input for t in ordinary] == ["1\n5\n"]
+    assert ordinary[0].expected_output == "5\n"
+
+
+def test_brute_force_checks_sample_after_first_three(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(tester, "_BRUTE_CACHE", tmp_path)
+    problem = make_problem()
+    problem.samples = problem.samples * 3 + [TestCase(input="1\n7\n", expected_output="7\n")]
+    executor = FakeExecutor({"print(6)": ["6\n"] * 4})
+    assert asyncio.run(tester.gen_brute_force(
+        FakeClient("print(6)"), problem, executor, use_cache=False
+    )) is None
+    assert not (tmp_path / "p1.py").exists()
+
+
 class FakeExecutor:
     """模拟执行器：按 code 内容返回预设输出。"""
 

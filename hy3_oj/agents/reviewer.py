@@ -20,6 +20,9 @@ import ast
 import json
 import logging
 import re
+from pathlib import Path
+
+import yaml
 
 from hy3_oj.core.schemas import (
     GenMode,
@@ -30,12 +33,14 @@ from hy3_oj.core.schemas import (
     ReviewStep,
     Solution,
     StepVerdict,
+    ReviewMaterial,
 )
+from hy3_oj.core.assessment import explanation_hash
 from hy3_oj.llm.client import Hy3Client
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
-RULE_VERSION = "0.5"  # 审查版本（v0.5：LLM 语义审查 + 行为探针双层；探针见 agents/prober.py）
+RULE_VERSION = "0.7"  # 题解与轨迹审查；不执行测试，不决定最终结果
 
 # ---------- AST 有效嵌套循环深度 ----------
 
@@ -143,33 +148,7 @@ def complexity_signals(solution: Solution, plan: Plan | None) -> list[str]:
 
 # ---------- LLM 五段式审查 ----------
 
-_STEPS = [s.value for s in ReviewStep]
-_ERROR_TYPES = [e.value for e in ProcessErrorType]
-
-# 五段定义与归属规则（v0.2：消除"边界处理 vs 实现一致性"等相邻段歧义，修复定位准确率 33% 缺口）
-_STEP_DEFINITIONS = """\
-五段定义与归属规则（判 fail 前必须先对照定义确认归属）：
-1. 题意理解：对题目目标、输入输出含义、约束范围的理解。读错题意（如目标函数理解反、约束范围看错）属此段。
-2. 算法选型：算法、数据结构或求解方向的选择。该用 DP 却用贪心、排序方向弄反、求解方向整体反转——典型表现为把 max 写成 min 或把 min 写成 max、把升序写成降序——属此段（不归边界处理或实现一致性）。
-3. 复杂度论证：复杂度分析本身。声称的量级与实现实际量级不符、数值代入论证错误（如代入约束后超出时限仍声称可过），属此段。
-4. 边界处理：输入数据边界条件的处理。off-by-one（如 range(n) 写成 range(n-1) 漏掉末元素）、比较符取等错误（<= 写成 <）、n=0/1、空输入、极端规模输入未处理，属此段。注意：本段"极值"指输入数据的极端取值；代码中 max/min 函数写反不是边界问题，归算法选型。
-5. 实现一致性：代码与算法意图的一致性。运算符笔误（+ 写成 -）、变量名/下标写错、实现与计划步骤矛盾，属此段。注意：max/min 写反属求解方向整体反转，归算法选型而非本段。"""
-
-_JUDGE_RULES = """\
-判定要求：
-- 每段判 pass/fail；fail 的 evidence 必须包含：出错代码的行号 + 该行错在哪 + 为何归属于该段（对照上方定义）。
-- 判 fail 必须指向具体行的具体错误（该行实际行为 vs 应有行为）；没有行级证据时不许凭整体风格或"我会用别的算法"判 fail。
-- 评估锚点是题面、判题预期输出与最终代码本身：**解题计划只是早期草稿，不是 ground truth**
-  （编码/修复阶段可能推翻了错误计划）。计划与实现不一致本身不构成任何段的 fail；
-  只有当最终代码的逻辑本身不成立时才判 fail。
-- 声称代码行为错误时，尽量附上一个具体输入佐证该行行为与应有行为不符（不强制）；
-  代码写得丑、写法与计划不同、存在无行为影响的死代码，都不构成 fail。
-- 归属判定按错误的**机制**（该行代码本身错在哪），而非**后果**（在什么输入下暴露、导致什么现象）。
-  例：表达式内 + 写成 -，即使只在边界输入下才暴露，仍归实现一致性；
-  循环上界少迭代一次，即使后果是整个答案错误，仍归边界处理。
-- error_step = 五段顺序中首个 fail 段，即根本原因所在段，而非后续症状段
-  （例：边界遗漏导致实现层面结果错误，error_step 应为"边界处理"）。
-- process_score 取 0.0~1.0。"""
+_PROMPT = yaml.safe_load((Path(__file__).resolve().parents[1] / "prompts" / "reviewer.yaml").read_text(encoding="utf-8"))
 
 
 def _extract_json(text: str) -> dict:
@@ -180,6 +159,30 @@ def _extract_json(text: str) -> dict:
         return json.loads(m.group(0))
     except json.JSONDecodeError:
         return {}
+
+
+def _consistent_review(data: dict) -> bool:
+    if not isinstance(data, dict):
+        return False
+    rows = data.get("step_verdicts")
+    if not isinstance(rows, list) or len(rows) != len(ReviewStep):
+        return False
+    if any(not isinstance(row, dict) or type(row.get("passed")) is not bool
+           or not isinstance(row.get("step"), str) for row in rows):
+        return False
+    by_step = {row.get("step"): row for row in rows}
+    if set(by_step) != {step.value for step in ReviewStep}:
+        return False
+    first_fail = next((step.value for step in ReviewStep if not by_step[step.value]["passed"]), None)
+    if data.get("error_step") != first_fail:
+        return False
+    try:
+        score = float(data["process_score"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not 0 <= score <= 1 or (first_fail and score == 1):
+        return False
+    return data.get("error_type") in {e.value for e in ProcessErrorType} if first_fail else data.get("error_type") is None
 
 
 def _number_lines(code: str) -> str:
@@ -208,29 +211,20 @@ async def review(
     verdict_summary: str,
     executor=None,
     answer_passed: bool | None = None,
+    material: ReviewMaterial | None = None,
 ) -> ProcessReview:
     """对一条解题轨迹做过程评估。
 
-    client=None 时只出静态信号（不定罪）；executor 提供且 answer_passed=True 时
-    追加行为探针（题面官方样例 + 参考解反向校验，行为级蒙对铁证，见 prober.py）。
+    material 包含最终题解及可见解题轨迹。代码用于核对实现一致性。
+    verdict_summary/executor/answer_passed 仅保留旧调用兼容，不影响审查，也不运行测试。
     """
     signals = lucky_pass_signals(solution, problem, plan)
-
-    # 行为探针：仅对 AC 解运行（R6 场景；失败解的过程问题已由判题证实）
-    probe_flags: list[str] = []
-    if executor is not None and answer_passed:
-        try:
-            from hy3_oj.agents import prober
-
-            probe_flags = await prober.probe(client, executor, problem, solution) if client else []
-        except Exception as e:  # noqa: BLE001
-            logging.warning("行为探针异常 %s: %s", problem.id, e)
 
     if client is None:
         # 纯规则降级模式：信号只记入证据，不定罪（v0.2 教训：表面模式无铁证）
         evidence = "规则审查未覆盖"
-        if signals or probe_flags:
-            evidence = f"静态信号(未复核): {'; '.join(signals + probe_flags)}"
+        if signals:
+            evidence = f"静态信号(未复核): {'; '.join(signals)}"
         return ProcessReview(
             step_verdicts=[StepVerdict(step=s, passed=True, evidence=evidence) for s in ReviewStep],
             lucky_pass_flags=[],
@@ -268,32 +262,30 @@ async def review(
         signals_schema = (
             ', "flag_verdicts": [{"signal": "原文照抄", "confirmed": true/false, "reason": "理由"}]'
         )
-    user = (
-        f"题目：\n{problem.statement[:6000]}\n\n"
-        f"判题样例（含数据集预期输出，格式判定以此为准）：\n{samples_text}\n\n"
-        f"解题计划（早期草稿，仅供参考，不是 ground truth）：\n{plan_text}\n\n"
-        f"最终代码（含行号）：\n```python\n{_number_lines(solution.code[:6000])}\n```\n\n"
-        f"判题结论：{verdict_summary}\n\n"
-        f"{signals_block}"
-        f"对解题过程做五段式审查：{_STEPS}。\n{_STEP_DEFINITIONS}\n\n{_JUDGE_RULES}\n"
-        f"error_type 从 {_ERROR_TYPES} 中选。\n"
-        "输出 JSON："
-        '{"step_verdicts": [{"step": "...", "passed": true, "evidence": "行号+错因+归属依据"}], '
-        '"error_step": "首个fail段或null", "error_line": 出错行号或null, '
-        '"error_type": "类型或null", "process_score": 0.0~1.0'
-        f"{signals_schema}" + "}"
-    )
+    context = {
+        "problem": problem.statement[:6000], "samples": samples_text,
+        "plan": plan_text, "solution_numbered": _number_lines(solution.code[:6000]),
+        "judge_result": verdict_summary, "signals_block": signals_block,
+        "signals_schema": signals_schema,
+        "explanation_numbered": _number_lines(material.explanation) if material else "未提供成文题解，仅审查给定的计划与过程材料",
+        "trace_events": json.dumps(material.trace_events, ensure_ascii=False) if material else "[]",
+    }
+    user = re.sub(r"\{\{\s*(\w+)\s*\}\}", lambda m: context[m.group(1)], _PROMPT["user"])
     # 快思考：慢思考输出是 CoT 会被截断，到不了 JSON（v1 planner 同根因，实测踩坑）
     data: dict = {}
     try:
-        r = await client.chat(
-            [{"role": "system", "content": "你是竞赛教练级评审，只输出 JSON。"},
-             {"role": "user", "content": user}],
-            mode=GenMode.FAST, temperature=0.0, max_tokens=4096, stage="review",
-        )
-        data = _extract_json(r.content)
-        if not data:
-            logging.warning("Reviewer LLM 返回无法解析（content 前 100 字符）: %s", r.content[:100])
+        messages = [{"role": "system", "content": _PROMPT["system"]},
+                    {"role": "user", "content": user}]
+        for attempt in range(2):
+            r = await client.chat(messages, mode=GenMode.FAST, temperature=0.0,
+                                  max_tokens=4096, stage="review")
+            data = _extract_json(r.content)
+            if _consistent_review(data):
+                break
+            messages += [{"role": "assistant", "content": r.content},
+                         {"role": "user", "content": _PROMPT["consistency_retry"]}]
+        else:
+            raise ValueError("Reviewer 返回的逐段判定与汇总结论不一致或不完整，无法确认审查结论")
     except Exception as e:  # noqa: BLE001
         # 额度耗尽/网络错误时显式告警（此前 except+data={} 静默吞错导致全部"默认通过"）
         logging.error("Reviewer LLM 调用失败: %s: %s", type(e).__name__, e)
@@ -309,8 +301,6 @@ async def review(
             ))
         except ValueError:
             continue
-    if not step_verdicts:
-        step_verdicts = [StepVerdict(step=s, passed=True, evidence="LLM 审查未返回，默认通过") for s in ReviewStep]
 
     error_step = None
     if data.get("error_step"):
@@ -325,8 +315,7 @@ async def review(
         except ValueError:
             error_type = None
 
-    # 定罪来源：①静态信号经 LLM 复核确认 ②行为探针（机器验证，无需 LLM 复核）
-    flags = _confirm_signals(data, signals) + probe_flags
+    flags = _confirm_signals(data, signals)
 
     try:
         score = float(data.get("process_score", 1.0))
@@ -335,20 +324,11 @@ async def review(
     if flags:
         score = min(score, 0.4)  # 蒙对命中（LLM 确认信号或探针铁证）时封顶
 
-    # 探针命中但未被判出任何 fail 段时，把行为证据落到实现一致性段（保证可追溯）
-    if probe_flags and error_step is None:
-        error_step = ReviewStep.IMPL_CONSISTENCY
-        error_type = error_type or ProcessErrorType.IMPL
-        step_verdicts = [
-            StepVerdict(step=sv.step, passed=False if sv.step == ReviewStep.IMPL_CONSISTENCY else sv.passed,
-                        evidence=probe_flags[0][:300] if sv.step == ReviewStep.IMPL_CONSISTENCY else sv.evidence)
-            for sv in step_verdicts
-        ]
-
     return ProcessReview(
         step_verdicts=step_verdicts,
         error_step=error_step,
         error_type=error_type,
         lucky_pass_flags=flags,
         process_score=max(0.0, min(1.0, score)),
+        explanation_sha256=explanation_hash(material.explanation) if material and material.explanation else None,
     )

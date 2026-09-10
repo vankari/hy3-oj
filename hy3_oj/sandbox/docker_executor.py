@@ -10,12 +10,13 @@ import logging
 import shutil
 import tempfile
 import uuid
+from copy import copy
 from pathlib import Path
 
 import docker
 import docker.errors
 
-from hy3_oj.core.schemas import JudgeResult, Solution, TestCase, Verdict
+from hy3_oj.core.schemas import JudgeResult, Solution, TestCase, Verdict, JudgeSpec
 from hy3_oj.sandbox.judge import classify, compare_output
 
 log = logging.getLogger(__name__)
@@ -97,6 +98,16 @@ _CPP_RUNNER = r"""
 import subprocess, sys, json, time, os, signal
 
 code_path, tests_path, time_limit = sys.argv[1], sys.argv[2], float(sys.argv[3])
+checker = None
+if len(sys.argv) > 4 and sys.argv[4] != "-":
+    import importlib.util
+    try:
+        spec = importlib.util.spec_from_file_location("checker", sys.argv[4])
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        checker = mod.check
+    except Exception:
+        checker = None
 tests = json.load(open(tests_path))
 results = []
 
@@ -135,9 +146,15 @@ for t in tests:
         except Exception:
             pass
         out, err, elapsed, timed_out = "", "TIMEOUT", int(time_limit * 1000), True
+    checker_ok = None
+    if checker is not None and p is not None and p.returncode == 0 and not timed_out:
+        try:
+            checker_ok = bool(checker(t["input"], out))
+        except Exception:
+            checker_ok = None
     results.append({"stdout": out, "stderr": err[-2000:],
                     "exit_code": p.returncode if not timed_out else -1,
-                    "timed_out": timed_out, "time_ms": elapsed, "compile_failed": False})
+                    "timed_out": timed_out, "time_ms": elapsed, "compile_failed": False, "checker_ok": checker_ok})
 while len(results) < len(tests):
     results.append({"stdout": "", "stderr": "runner budget exhausted", "exit_code": -1,
                     "timed_out": False, "time_ms": 0, "compile_failed": False})
@@ -167,6 +184,15 @@ class DockerExecutor:
         self.nano_cpus = int(sb.get("nano_cpus", 1_000_000_000))
         self.network_disabled = bool(sb.get("network_disabled", True))
         self._client = docker.from_env()
+        self.strict_checker = False
+
+    def with_limits(self, spec: JudgeSpec) -> DockerExecutor:
+        """共享连接但独立保存单题限制，避免并发题目互相改写配置。"""
+        scoped = copy(self)
+        scoped.time_limit = spec.time_limit_s
+        scoped.memory = f"{spec.memory_mb}m"
+        scoped.strict_checker = spec.checker is not None
+        return scoped
 
     def ping(self) -> bool:
         try:
@@ -190,13 +216,16 @@ class DockerExecutor:
             try:
                 (workdir / "main.cpp").write_text(solution.code, encoding="utf-8")
                 (workdir / "runner.py").write_text(_CPP_RUNNER, encoding="utf-8")
+                if checker:
+                    (workdir / "checker.py").write_text(checker, encoding="utf-8")
                 import json as _json
                 (workdir / "tests.json").write_text(
                     _json.dumps([{"input": t.input} for t in tests], ensure_ascii=False), encoding="utf-8"
                 )
                 raw = self._run_container(
                     workdir,
-                    ["python3", "/work/runner.py", "/work/main.cpp", "/work/tests.json", str(self.time_limit)],
+                    ["python3", "/work/runner.py", "/work/main.cpp", "/work/tests.json", str(self.time_limit),
+                     "/work/checker.py" if checker else "-"],
                     image=self.cpp_image,
                 )
                 while len(raw) < len(tests):
@@ -316,7 +345,12 @@ class DockerExecutor:
                                compile_failed=bool(r.get("compile_failed")))
             diff = ""
             if verdict == Verdict.AC:
-                if t.expected_output is not None:
+                if getattr(self, "strict_checker", False):
+                    if r.get("checker_ok") is None:
+                        verdict, diff = Verdict.RE, "configured checker unavailable"
+                    elif r["checker_ok"] is not True:
+                        verdict, diff = Verdict.WA, f"checker rejected: got {r['stdout'][:200]!r}"
+                elif t.expected_output is not None:
                     exact = compare_output(t.expected_output, r["stdout"])
                     # 特判语义：checker 只能把 WA 翻 AC；精确匹配的 AC 永不被推翻
                     if not exact and r.get("checker_ok") is not True:

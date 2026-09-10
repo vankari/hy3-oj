@@ -1,49 +1,104 @@
 # 演示脚本（≤2 分钟，任务书 R9）
 
-> 展示一次**完整的解题与过程评估流程**。录屏工具：OBS / Windows 自带 Xbox Game Bar。
-> 建议分辨率 1920×1080，浏览器全屏，字体缩放 100%。
+已完成 1 分 58 秒真实应用录屏，含中文字幕与旁白。
+当前成片的题源、测试构造与交付文件见 [Demo 交付说明](demo_delivery.md)。
+首页保留通用输入区，演示时手动上传题包。
 
-## 前置准备（录制前完成，不计入时长）
+## 当前成片分镜
 
-```powershell
-conda activate hy3-oj
-# 确保 .env 已填 HY3_API_KEY，Docker Desktop 已启动
-python scripts/run_demo.py        # 自动打开 http://localhost:8501
-```
-- 关闭无关窗口与通知
-- 准备一个样例题文件（可用界面「下载题目模板」生成，或直接用 `problems/` 下示例）
-- 建议预跑一次该题（填充缓存），避免录制时等待过久
+| 时段 | 画面 / 操作 | 说明 |
+|---|---|---|
+| 00:00–00:13 | 工作区、输入澄清 | 不完整题面先澄清 |
+| 00:13–00:22 | 外部题包上传、C++17 选择 | 苏剑林博客题，平方根基础版 |
+| 00:22–00:31 | 固定测试与自动解题 | seed=9775，边界/反例/随机数，交叉核验标答 |
+| 00:31–00:39 | 外部判题结果 | 1 秒 / 256 MB，75/75 |
+| 00:39–00:49 | 公式题解与五段审查 | 审题意、算法、复杂度、边界和实现一致性 |
+| 00:49–00:58 | 内部题包上传 | 支持 CodeContests / LiveCodeBench，本次来自后者 |
+| 00:58–01:10 | Merge Set 代码与结果 | ABC302 F，解释集合合并题名，数据集 16/16 |
+| 01:10–01:28 | AI 造测、修复、过程错误 | 真实历史回放；判题 AC 与过程状态独立 |
+| 01:28–01:41 | 人工反馈、历史搜索与刷新 | 反馈落盘，刷新后恢复对话 |
+| 01:41–01:58 | 批量看板、难度分层、逐题详情、收尾 | 已有 LiveCodeBench 60 题评测记录 |
 
-## 分镜（总时长约 110 秒）
+两条正向样例已通过真实浏览器在线复测，过程审查也通过。拍摄使用正常缓存复跑；等待加速和历史回放均在片中标注。
+外部基础版为本项目固定测试，不走 AI 造测；负向历史片段单独展示无完整题包时的 AI 造测功能。
+大数据版 v2 是 90 点，未将在线模型的已知错误候选作为成功案例。
 
-| 时段 | 画面 | 操作 | 旁白要点 |
-|---|---|---|---|
-| 0:00–0:10 | 标题 + 侧边导航 | 打开浏览器 | "Hy3-OJ：基于腾讯混元 Hy3 的算法竞赛智能解题与过程评估系统" |
-| 0:10–0:25 | 解题工作台 / 文件上传 | 拖入题目 md | "支持外部 md/txt 题目输入，也可粘贴文本或从数据集选题" |
-| 0:25–0:55 | 点「开始解题」→ 进度展开 | 点击执行 | "闭环执行：题意解析 → 算法规划 → K 路采样 → 预筛 → 判题 → 失败自动反思修复" |
-| 0:55–1:10 | 结果 / 代码 + 判题 tab | 切换查看 | "产出代码与判题结论；若失败会按 WA/TLE/RE 定向修复，最多 N 轮" |
-| 1:10–1:35 | 过程评估 tab | 展开五段 | "核心能力：五段式过程审查——定位首个出错步骤、归类错误类型、检测蒙对" |
-| 1:35–1:50 | 题解 tab | 滚动浏览 | "面向初学者生成七节成文题解，并回答案例题实际踩到的坑" |
-| 1:50–2:00 | 评测看板 / 人类反馈 | 快速切换 | "评测看板给分层结果；人类反馈记录误报，驱动评估器迭代" |
+## 题包与复现
 
-## 录制要点
+从 [分片交付目录](../runs/releases/demo/README.md)还原后，上传 `problems/integer_decomposition/sqrt_problem.jsonl` 或 `problems/merge_set_problem.jsonl`。
+外部题也可执行 `python scripts/make_integer_decomposition_demo.py` 重新生成，再以 `python scripts/verify_integer_decomposition_demo.py` 校准。
+已有内部样例准备入口为 `scripts/prepare_demo_sample.py`；原始子集未入库时，直接使用交付包中的完整单题 JSONL。
 
-1. **进度条不要快进**——闭环执行是本系统的核心看点，让它真实跑（若预跑过缓存会很快）
-2. **过程评估 tab 要展开至少一段** 显示"证据"文本，证明不是空壳
-3. 若某题判题失败，**照常展示**——未通过的题更能体现过程评估（错误定位）价值
-4. 结尾停在"人类反馈"页面，点明 human-in-the-loop 闭环
+题解和过程由 Reviewer 审查；AC/WA/TLE 只由判题器决定，两者组合为独立状态。
+本片 16 个内部测试来自所保存的 LiveCodeBench 数据，不是 AtCoder 站外提交成绩。
 
-## 备选方案（若时间紧张）
+## 部署说明（环境搭建）
 
-静态 GIF：截解题工作台 → 结果四 tab 的切换，配上字幕，约 20 秒循环。
+### 1. 环境要求
+- **操作系统**：Windows 10/11、macOS、Linux 均可（本项目开发机为 Windows，沙箱判题走 Docker 容器）
+- **Python**：3.11（推荐 conda 隔离；Windows 上 `python` 常被 Microsoft Store 占位，请用 `conda activate hy3-oj` 或绝对路径）
+- **Docker**：Docker Desktop（沙箱判题容器；Windows 需**手动启动** Docker Desktop，且不可用 rlimit，已用进程组整杀兜底）
+- **网络**：可访问腾讯混元 Hy3 API 与 Docker Hub（拉镜像）
 
-## 复现命令（写在视频说明里）
-
+### 2. 获取代码
 ```bash
 git clone https://github.com/vankari/hy3-oj
 cd hy3-oj
-conda env create -f environment.yml && conda activate hy3-oj
-cp .env.example .env      # 填写 HY3_API_KEY
-docker pull python:3.11-slim && docker pull gcc:13
-python scripts/run_demo.py
 ```
+
+### 3. 创建运行环境
+```powershell
+conda env create -f environment.yml
+conda activate hy3-oj
+pip install -e . --no-deps
+# 备选：pip install -r requirements.txt（需 Python 3.11）
+```
+
+### 4. 配置密钥（零入库）
+```powershell
+cp .env.example .env      # 编辑 .env 填入 HY3_API_KEY=你的密钥
+```
+- 密钥**只**从环境变量 / `.env` 读取，代码、yaml、md、commit 均不含明文 key（任务书硬性要求）
+- 若 D 盘已满、C 盘有空间：在 `.env` 设 `HY3_HF_CACHE=C:/hy3-oj-cache/hf` 把 HF 缓存切到 C 盘
+
+### 5. 准备 Docker 镜像
+```powershell
+docker pull python:3.11-slim     # Python3 判题沙箱
+docker pull gcc:13               # C++17 判题沙箱（g++ 13.4，用于硬题 TLE 攻坚）
+```
+> C++17 路径：`gcc:13` 镜像同时内置 `python3`（运行编译/执行 runner），无需自建镜像。
+
+### 6. 启动演示（GUI）
+```powershell
+conda activate hy3-oj
+python scripts/run_demo.py       # 自动打开 http://localhost:8501
+```
+界面为单一对话工作区：底部粘贴或上传题目，侧边栏查看历史对话。
+- 结果含题解、代码、过程评估三个页签。
+- 解题偏好、批量评测记录和人工反馈放在折叠区。
+
+### 7. 批量评测（CLI，非 GUI）
+```powershell
+# 单题子集闭环（可强制语言，避免非算法 RE/TLE 干扰判断）
+python scripts/run_solve.py --subset data/subsets/subset_mid100.jsonl `
+    --out runs/closed_loop_mid100.jsonl --lang cpp --concurrency 2
+# 正式集：解题 → 过程评估 → 分层报告（断点续跑）
+python scripts/run_eval.py --subset data/subsets/subset_v1.jsonl `
+    --out-solve runs/closed_loop_v3_300.jsonl --out-review runs/review_v3_300.jsonl `
+    --report docs/formal_eval_report.md
+```
+
+### 8. Windows 专属注意事项
+- **Docker 必须手动启动** Docker Desktop，否则判题直接失败
+- **控制台 GBK 乱码**：各入口已 `sys.stdout.reconfigure(utf-8)`；涉及中文路径的操作优先用脚本文件执行
+- **D 盘 100% 满**：HF 缓存经 `HY3_HF_CACHE` 切 C 盘；Docker 镜像存储也在 C 盘
+- **`python` 占位**：始终 `conda activate hy3-oj` 或用绝对路径 `D:\ANACONDA\envs\hy3-oj\python.exe`
+
+### 9. 故障排查
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 页面打不开 / 解题报 key 错 | 未配置 HY3_API_KEY | 检查 `.env`（步骤 4） |
+| 判题立刻失败 / 无容器 | Docker 未启动或镜像缺失 | 步骤 5 拉镜像并启动 Docker |
+| C++ 题编译/执行异常 | 误用 python 镜像 | cpp 模式自动选 `gcc:13`，确认已 `pull` |
+| API 超时 | 误走代理 | 运行前清空 `HTTP_PROXY`/`HTTPS_PROXY` 等环境变量 |
+| 中文路径乱码 | PowerShell GBK | 用脚本文件执行（步骤 8） |

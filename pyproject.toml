@@ -11,5 +11,8 @@ requires-python = ">=3.11"
 [tool.setuptools.packages.find]
 include = ["hy3_oj*"]
 
+[tool.setuptools.package-data]
+hy3_oj = ["prompts/*.yaml", "prompts/repair/*.yaml", "ui/*.css"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

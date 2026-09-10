@@ -1,0 +1,7 @@
+# Keep binary delivery parts byte-identical across Windows and Linux checkouts.
+*.zip.[0-9][0-9][0-9] binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.mp4 binary
+*.srt text eol=lf

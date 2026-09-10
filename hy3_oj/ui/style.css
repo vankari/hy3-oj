@@ -1,0 +1,32 @@
+/* Warm paper, restrained teal, and a readable conversation column. */
+.stApp { background: #faf9f6; color: #262a28; }
+[data-testid="stHeader"] { background: rgba(250,249,246,.95); }
+[data-testid="stSidebar"] { background: #f0efea; border-right: 1px solid #e2e2d9; }
+[data-testid="stSidebar"] .stButton button { text-align: left; justify-content: flex-start; border-radius: 9px; }
+[data-testid="stSidebar"] .stButton button[kind="secondary"] { background: transparent; border-color: transparent; }
+[data-testid="stSidebar"] .stButton button:hover { background: #e5e7df; border-color: #d0d9cd; }
+[data-testid="stSidebar"] .stButton button [data-testid="stMarkdownContainer"] { flex: 1; }
+[data-testid="stSidebar"] .stButton button p { text-align: left; }
+[data-testid="stSidebar"] [data-testid="stButton"] button { justify-content: flex-start; }
+[data-testid="stSidebar"] [data-testid="stButton"] button [data-testid="stMarkdownContainer"] { flex: 1; }
+[data-testid="stSidebar"] [data-testid="stButton"] button p { text-align: left; }
+[data-testid="stToolbar"] { display: none; }
+.block-container { max-width: 960px; padding-top: 2.5rem; padding-bottom: 3rem; }
+h1, h2, h3 { letter-spacing: -.035em; }
+.hy-brand { font-size: 1.35rem; font-weight: 750; letter-spacing: -.04em; margin-bottom: .25rem; }
+.hy-brand span { color: #317060; }
+.hy-hero { text-align: center; padding: 7vh 0 2.5rem; }
+.hy-eyebrow { color: #527b6a; font-size: .75rem; letter-spacing: .18em; font-weight: 650; }
+.hy-hero h1 { font-size: clamp(2rem, 4vw, 3rem); font-weight: 550; margin: .8rem 0; }
+.hy-hero p { color: #73766e; font-size: 1rem; line-height: 1.9; }
+[data-testid="stChatMessage"] { background: transparent; padding: 1.3rem .5rem; }
+[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) { background: #eeefe8; border-radius: 16px; }
+[data-testid="stChatInput"] { border-radius: 18px; border: 1px solid #d9ded3; box-shadow: 0 4px 20px #223c2c08; }
+[data-testid="stBottom"] > div { background: #faf9f6; }
+.stTabs [data-baseweb="tab-list"] { gap: 1.5rem; border-bottom: 1px solid #e2e5dc; }
+.stTabs [data-baseweb="tab"] { font-size: .9rem; }
+.stTabs [aria-selected="true"] { color: #317060; }
+button[kind="primary"] { background: #317060; border-color: #317060; }
+button:focus-visible { outline: 2px solid #317060; outline-offset: 3px; }
+[data-testid="stExpander"] { border-color: #e0e3da; border-radius: 12px; }
+@media(max-width: 640px) { .block-container { padding: 1.2rem 1rem; } .hy-hero { padding-top: 3vh; } }

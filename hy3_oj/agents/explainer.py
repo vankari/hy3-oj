@@ -18,37 +18,17 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
+
 from hy3_oj.core.schemas import GenMode, Plan, Problem, ProcessReview, Solution
 from hy3_oj.llm.client import Hy3Client
 
-_SYSTEM = (
-    "你是一位善于教学的算法竞赛教练。你的读者是刚学算法的初学者："
-    "讲解要由浅入深、先讲为什么再讲怎么做，避免堆砌术语，关键处给出直觉解释。"
-)
-
-_OUTLINE = """请按以下结构输出 Markdown 题解（不要输出推理过程，直接成文）：
-
-## 1. 题目在说什么
-（用自己的话重述题意，明确输入、输出、数据范围；指出约束里最关键的量级）
-
-## 2. 从暴力想到正解
-（先说最朴素的做法与它为什么慢，再说如何优化，讲清"为什么能想到这个算法"）
-
-## 3. 算法步骤
-（编号步骤，与代码结构一一对应）
-
-## 4. 为什么这样做是对的
-（不变量/归纳/反证，简短说清即可）
-
-## 5. 复杂度
-（时间复杂度与空间复杂度，给出推导过程，并说明能否通过数据范围）
-
-## 6. 代码讲解
-（按代码关键片段讲解，说明每个变量/循环在做什么）
-
-## 7. 易错点
-（边界情况、溢出、输入输出格式等初学者常踩的坑）
-"""
+_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "explainer.yaml"
+_PROMPT = yaml.safe_load(_PROMPT_PATH.read_text(encoding="utf-8"))
+_SYSTEM = _PROMPT["system"]
+_OUTLINE = _PROMPT["outline"]
 
 
 async def explain(
@@ -78,7 +58,8 @@ async def explain(
             f"\n过程审查：error_step={review.error_step.value if review.error_step else '无'}，"
             f"error_type={review.error_type.value if review.error_type else '无'}，"
             f"蒙对标记={review.lucky_pass_flags or '无'}\n"
-            f"未通过步骤段：{fails or '无'}"
+            f"未通过步骤段：{fails or '无'}\n"
+            f"完整审查证据：{review.model_dump_json()}"
         )
 
     user = (
@@ -88,8 +69,6 @@ async def explain(
         f"最终{language_hint}代码：\n```\n{solution.code[:6000]}\n```\n\n"
         f"判题结论：{judge_summary}{review_text}\n\n"
         f"{_OUTLINE}\n\n"
-        "注意：若判题未通过或过程审查发现问题，请在第 7 节明确指出"
-        "本题曾出现的具体错误与修复思路，帮助初学者避开同类陷阱。"
     )
 
     r = await client.chat(

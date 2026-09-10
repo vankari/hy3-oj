@@ -20,9 +20,11 @@ def test_outline_has_all_sections() -> None:
 class FakeClient:
     def __init__(self) -> None:
         self.kwargs: dict = {}
+        self.messages = []
 
     async def chat(self, messages, mode=None, temperature=None, max_tokens=None, stage=None):
         self.kwargs = {"mode": mode, "max_tokens": max_tokens, "stage": stage}
+        self.messages = messages
         body = messages[-1]["content"]
 
         class R:
@@ -44,6 +46,26 @@ def test_explain_uses_fast_thinking_and_big_budget() -> None:
     assert c.kwargs["stage"] == "explain"
     assert c.kwargs["max_tokens"] >= 4096
     assert c.kwargs["mode"].value == "fast"
+
+
+def test_review_evidence_reaches_explainer() -> None:
+    from hy3_oj.core.schemas import StepVerdict
+
+    c = FakeClient()
+    evidence = "for a in range(1, isqrt(N)+1) requires O(N^0.5), exceeding O(N^0.25)."
+    review = ProcessReview(step_verdicts=[StepVerdict(
+        step=ReviewStep.COMPLEXITY_PROOF, passed=False, evidence=evidence,
+    )])
+    out = asyncio.run(explainer.explain(
+        c, make_problem(), Solution(code="x"), review=review, judge_summary="AC",
+    ))
+    assert evidence in c.messages[-1]["content"]
+    assert out.startswith("## 1.")
+
+
+def test_explanation_does_not_announce_review_status() -> None:
+    out = asyncio.run(explainer.explain(FakeClient(), make_problem(), Solution(code="x")))
+    assert out.startswith("## 1.")
 
 
 def test_explain_includes_review_and_judge_in_prompt() -> None:

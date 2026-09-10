@@ -46,9 +46,11 @@ def summarize_by_difficulty(
             }
         answered = sum(1 for s, _ in pairs if s.get("passed"))
         # 无审查记录或审查失败（缺 process_score）的题不计入过程类指标分母
-        reviewed = [(s, r) for s, r in pairs if r and "process_score" in r]
+        reviewed = [(s, r) for s, r in pairs if r and "process_score" in r
+                    and ("assessment" not in r or r["assessment"].get("process_status") in ("passed", "failed"))]
         rn = len(reviewed)
-        process_ok = sum(1 for _, r in reviewed if r["process_score"] >= threshold)
+        process_ok = sum(1 for _, r in reviewed if (
+            r["assessment"].get("process_status") == "passed" if "assessment" in r else r["process_score"] >= threshold))
         no_fail_step = sum(1 for _, r in reviewed
                            if not any(sv["passed"] is False for sv in r.get("step_verdicts", [])))
         lucky = sum(1 for _, r in reviewed if r.get("answer_passed") and r.get("lucky_pass_flags"))

@@ -16,6 +16,8 @@ Hy3-OJ 是一个算法竞赛端到端智能体系统：
 
 ## 核心结果
 
+演示视频与完整单题包见 [Demo 交付说明](docs/demo_delivery.md)：包含外部题和 LiveCodeBench hard 题的来源、固定测试构造、中文字幕视频及分片还原命令。
+
 | 数据集 | 基线（单轮直出） | 闭环 v10 |
 |---|---|---|
 | LiveCodeBench（60 题） | 30.0% | **81.7%**（easy 95% / medium 80% / hard 70%） |
@@ -32,8 +34,11 @@ Hy3-OJ 是一个算法竞赛端到端智能体系统：
 ## 快速开始
 
 ```bash
+git clone https://github.com/vankari/hy3-oj.git
+cd hy3-oj
 conda env create -f environment.yml
 conda activate hy3-oj
+pip install -e . --no-deps   # 注册项目包，供 GUI / CLI 使用
 cp .env.example .env          # 填写 HY3_API_KEY（密钥禁止提交仓库）
 
 docker pull python:3.11-slim  # Python 判题镜像
@@ -42,7 +47,12 @@ docker pull gcc:13            # C++17 兜底镜像（hard 档 TLE 攻坚）
 python scripts/run_demo.py    # 启动图形界面 → http://localhost:8501
 ```
 
-界面支持三种题目来源：上传 md/txt、粘贴文本、从数据集选题（`problems/` 下有示例）。
+启动前确保 Docker Desktop 已运行。配置与模型参数见 `configs/default.yaml`，密钥只填写到本地 `.env`。
+无需 conda 时，可在 Python 3.11 虚拟环境中执行 `pip install -r requirements.txt` 和 `pip install -e . --no-deps`。
+完整部署与故障排查见 [部署说明](docs/demo_script.md#部署说明环境搭建)。
+
+界面支持粘贴文本、上传 md/txt 题面或包含测试的 JSONL 题包（`problems/` 下有示例）。
+首次克隆不带全量数据集和运行历史；可按 [Demo 交付说明](docs/demo_delivery.md)还原完整演示题包直接上传。
 
 ## 命令行用法
 
@@ -51,23 +61,33 @@ python scripts/run_solve.py --subset data/subsets/subset_lcb_v1.jsonl --out runs
 python scripts/run_explain.py --file problems/example_two_sum.md --out runs/explain/
 python scripts/run_review.py --mode review --subset ... --solutions ... --out ...
 python scripts/make_subset.py --total 300 --scan-limit 2000 --out data/subsets/subset_v1.jsonl
-pytest tests/                 # 132 用例（Docker 未启动时容器相关自动 skip）
+pytest tests/                 # Docker 未启动时容器相关用例自动 skip
 ```
 
 支持 Ctrl+C 优雅中断：不再开始新题，已完成结果全部保留，重跑自动续跑。
 
 ## 文档
 
-| 文档 | 内容 |
+建议先读任务书对齐和架构设计，复现演示时读部署脚本与交付说明。下表覆盖 `docs/` 下全部 Markdown 文档；评测报告保留各自实验版本和数据口径，历史结果不等同于当前成片的验收结果。
+
+| 文档 | 内容梗概与用途 |
 |---|---|
-| [方案设计](混元大语言模型-场景二算法竞赛方向-方案设计.md) | 总体方向：思路/架构/重点技术/预期效果/时间规划 |
-| [项目架构设计](docs/项目架构设计.md) | folder 级模块设计、交互关系、算法思路、参考文献 |
-| [PDF 任务书对齐](docs/pdf任务书对齐.md) | 任务书硬性要求 R1–R9 逐条对齐表 |
-| [LiveCodeBench 报告 v10](docs/lcb_report_v10.md) | 60 题分层结果 + 版本演进 + 关键工程发现 |
-| [过程评估报告](docs/process_evaluation_report.md) | R3–R8：五段式审查/定位准确率/误报率/蒙对案例 |
-| [闭环消融报告](docs/ablation_report.md) | 基线 vs 闭环的模块增益拆解 |
-| [GUI 设计](docs/gui_design.md) | 页面结构、布局、技术决策 |
-| [演示脚本](docs/demo_script.md) | 2 分钟演示分镜（任务书 R9） |
+| [PDF 任务书对齐](docs/pdf任务书对齐.md) | 提炼任务书 R1–R9，逐条对应实现模块、验收指标与交付物；用于核对需求覆盖。 |
+| [项目架构设计](docs/项目架构设计.md) | 说明目录职责、数据契约、Agent 编排、沙箱与评测数据流，附闭环状态机和相关论文；用于理解系统设计。 |
+| [GUI 设计](docs/gui_design.md) | 说明对话工作区、题目输入、历史恢复、后台解题及结果展示的设计与实现取舍。 |
+| [单轮基线报告](docs/baseline_report.md) | 记录冒烟子集的单轮直出结果、失败类型、成本及复现命令，为闭环增益提供对照。 |
+| [闭环 v1 消融发现](docs/ablation_v1_findings.md) | 记录早期采样增益、规划与反思失效的根因、v2 修复和待验证假设；用于追溯迭代依据。 |
+| [闭环消融报告](docs/ablation_report.md) | 汇总 31 题冒烟、100 题扩展和 v3 重跑，分析模块增益、工程问题、token 成本与复现步骤。 |
+| [LiveCodeBench 早期报告](docs/lcb_report.md) | 说明 60 题子集构造、早期基线与闭环结果、过程评估及与 CodeContests 的对照，记录加载器适配细节。 |
+| [LiveCodeBench 报告 v10](docs/lcb_report_v10.md) | 汇总 v10 的 60 题结果、难度分层、版本演进、残余失败原因与复现命令；对应视频批量看板的实验版本。 |
+| [过程评估报告](docs/process_evaluation_report.md) | 围绕 R3–R8 介绍五段审查、错误定位与归类、蒙对案例、注入验证及人工抽检，说明定位准确率和误报率口径。 |
+| [人工抽检指南](docs/人工抽检指南.md) | 定义真实错误、误报及不确定情况的判断标准，给出证据检查、反馈填写步骤与已核验判例。 |
+| [整数分解测试数据说明](docs/integer_decomposition_dataset.md) | 说明博客题源、平方根与四次根两档题面、1 秒限制、确定性造测、独立标答核验、特殊校验器和在线反例。 |
+| [Demo 候选题清单](docs/demo_problems.md) | 保存早期从两个数据集筛选的各难度候选题与运行命令；为历史备选清单，最终选题以交付说明为准。 |
+| [演示脚本与部署](docs/demo_script.md) | 提供当前 1 分 58 秒成片分镜、题包复现、环境安装、密钥配置、Docker 启动和常见故障排查。 |
+| [Demo 交付说明](docs/demo_delivery.md) | 说明最终两个样例的来源及名称、测试构造、在线验收、功能镜头、配图、视频分片还原和上传完整性检查。 |
+
+总体研究目标、技术路线与排期另见根目录的 [方案设计](混元大语言模型-场景二算法竞赛方向-方案设计.md)。文档配图和字幕位于 `docs/assets/demo/`。
 
 ## 目录结构
 

@@ -18,7 +18,8 @@ import random
 from collections import Counter
 from pathlib import Path
 
-from hy3_oj.agents import reviewer
+from hy3_oj.agents import reviewer, explainer
+from hy3_oj.core.assessment import assess, load_review_material
 from hy3_oj.core.config import load_config
 from hy3_oj.core.schemas import Plan, Problem, Solution
 from hy3_oj.data.subset import load_subset
@@ -52,9 +53,6 @@ def _load_plan_from_trace(trace_file: str) -> Plan | None:
 
 
 async def mode_review(client, problems: list[Problem], solutions: dict, out: str, concurrency: int, cfg) -> None:
-    from hy3_oj.sandbox.docker_executor import DockerExecutor
-
-    executor = DockerExecutor(cfg)
     sem = asyncio.Semaphore(concurrency)
     lock = asyncio.Lock()
 
@@ -64,13 +62,18 @@ async def mode_review(client, problems: list[Problem], solutions: dict, out: str
             return
         plan = _load_plan_from_trace(rec.get("trace_file", ""))
         verdict_summary = "AC（全部测试点通过）" if rec.get("passed") else f"未通过（{rec.get('rounds', 0)} 轮修复后仍失败）"
-        sol = Solution(code=rec["code"])
+        sol = Solution(code=rec["code"], language=rec.get("language_used") or "python3")
         async with sem:
-            review = await reviewer.review(client, p, plan, sol, verdict_summary,
-                                           executor=executor, answer_passed=bool(rec.get("passed")))
+            explanation = rec.get("explanation") or await explainer.explain(
+                client, p, sol, plan=plan, judge_summary=verdict_summary, language_hint=sol.language.value)
+            review = await reviewer.review(client, p, plan, sol, "",
+                material=load_review_material(explanation, rec.get("trace_file", "")))
         out_rec = {
             "problem_id": p.id, "difficulty": p.difficulty, "answer_passed": rec.get("passed"),
             "process_score": review.process_score,
+            "explanation": explanation,
+            "explanation_sha256": review.explanation_sha256,
+            "assessment": assess(rec.get("passed"), review, explanation).model_dump(mode="json"),
             "error_step": review.error_step.value if review.error_step else None,
             "error_type": review.error_type.value if review.error_type else None,
             "lucky_pass_flags": review.lucky_pass_flags,
@@ -89,8 +92,8 @@ async def mode_review(client, problems: list[Problem], solutions: dict, out: str
     n = len(recs)
     if n:
         ac = sum(1 for r in recs if r["answer_passed"])
-        process_ok = sum(1 for r in recs if r["process_score"] >= 0.8)
-        lucky = [r for r in recs if r["answer_passed"] and r["process_score"] < 0.8]
+        process_ok = sum(1 for r in recs if r.get("assessment", {}).get("process_status") == "passed")
+        lucky = [r for r in recs if r.get("assessment", {}).get("combined_status") == "answer_only"]
         print(f"\n===== 过程评估汇总（{n} 题）=====")
         print(f"答案正确率 {ac}/{n} = {ac / n:.1%}；过程正确率 {process_ok}/{n} = {process_ok / n:.1%}")
         print(f"答案对但过程不成立 {len(lucky)} 题: {[r['problem_id'] for r in lucky]}")

@@ -17,7 +17,8 @@ from hy3_oj.agents import explainer, reviewer
 from hy3_oj.core.config import load_config
 from hy3_oj.core.pipeline import SolvePipeline
 from hy3_oj.core.problem_io import load_problem_file, load_problems_dir
-from hy3_oj.core.schemas import Plan, Problem
+from hy3_oj.core.schemas import Plan, Problem, Solution
+from hy3_oj.core.assessment import assess, load_review_material
 from hy3_oj.data.subset import load_subset
 
 
@@ -40,21 +41,16 @@ async def handle(problem: Problem, pipeline: SolvePipeline, out_path: Path) -> N
     plan = _load_plan(result.get("trace_file", ""))
 
     verdict = "AC（全部测试点通过）" if result["passed"] else f"未通过（{result.get('rounds', 0)} 轮修复后仍失败）"
-    review = await reviewer.review(
-        pipeline.client, problem, plan,
-        __import__("hy3_oj.core.schemas", fromlist=["Solution"]).Solution(code=result["code"]),
-        verdict,
-    )
-    print(f"[review] process_score={review.process_score} "
-          f"error_step={review.error_step.value if review.error_step else None} "
-          f"lucky={review.lucky_pass_flags or '无'}")
-
     print("[explain] 生成题解...")
+    solution = Solution(code=result["code"], language=result.get("language_used") or "python3")
     md = await explainer.explain(
-        pipeline.client, problem,
-        __import__("hy3_oj.core.schemas", fromlist=["Solution"]).Solution(code=result["code"]),
-        plan=plan, review=review, judge_summary=verdict,
+        pipeline.client, problem, solution,
+        plan=plan, judge_summary=verdict, language_hint=solution.language.value,
     )
+    review = await reviewer.review(pipeline.client, problem, plan, solution, "",
+        material=load_review_material(md, result.get("trace_file", "")))
+    assessment = assess(result.get("passed"), review, md)
+    print(f"[review] process={assessment.process_status.value}, combined={assessment.combined_status.value}")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     header = (

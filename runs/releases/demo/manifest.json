@@ -1,0 +1,136 @@
+{
+  "format": 1,
+  "archive": "Hy3-OJ-demo.zip",
+  "part_bytes": 8388608,
+  "files": [
+    {
+      "path": "chapters.json",
+      "bytes": 4690,
+      "sha256": "5133d38395f0b2dc342a67a4c1a7d49ee81d21f6532cb1d43857b89bd0a9a0cf"
+    },
+    {
+      "path": "evidence/browser_acceptance.json",
+      "bytes": 745,
+      "sha256": "0fcdc654407fabf769b98f9a848d612c1ce1990e4bd5612c3ebe1a0e47341110"
+    },
+    {
+      "path": "evidence/extras.json",
+      "bytes": 199,
+      "sha256": "3b0d18b44607dd5589aa86da2084c7435ef62ad67d3d05ec935a7340f8d3e1f8"
+    },
+    {
+      "path": "evidence/traces/atcoder_abc302_f.jsonl",
+      "bytes": 31464,
+      "sha256": "6990a0db1413e2ca1ec6a603ace705533c552b73d523943b9278f16a71a036b1"
+    },
+    {
+      "path": "evidence/traces/external_integer-decomposition-sqrt.jsonl",
+      "bytes": 30426,
+      "sha256": "9e8c1452649fb3c194732f44d1bb4bdd43bf3e640a59237ad317c8329c31fa34"
+    },
+    {
+      "path": "Hy3-OJ-demo.mp4",
+      "bytes": 15316970,
+      "sha256": "515ff5e790decb5cb6bf47df8494a28259f6b4d94c98d01eaa40e974a4a489d6"
+    },
+    {
+      "path": "Hy3-OJ-demo.zh-CN.srt",
+      "bytes": 1889,
+      "sha256": "ba51f41b54cd15026b58ffeb3ca8edabd71dd00286facf802e14d021102ad569"
+    },
+    {
+      "path": "problems/integer_decomposition/benchmark.json",
+      "bytes": 4081,
+      "sha256": "dbeefbc290ecfc67fd965543f6abe28d61d0d542d04c582ed1683fa06383aeba"
+    },
+    {
+      "path": "problems/integer_decomposition/fourth_problem.jsonl",
+      "bytes": 15247,
+      "sha256": "c9e70c778b00ce65f70992e093961fb500fdadb7b9c6de04f233ca8d60a8d885"
+    },
+    {
+      "path": "problems/integer_decomposition/fourth_statement.md",
+      "bytes": 1066,
+      "sha256": "e467c9f01d9634539f6a3acc7ccca107ce39db10927521d47f68d37d38e106c3"
+    },
+    {
+      "path": "problems/integer_decomposition/manifest.json",
+      "bytes": 21808,
+      "sha256": "e1a70958df442c2e4f5a75a931d6ba40474a75b34f11c20e64a2f2f5afa6ce15"
+    },
+    {
+      "path": "problems/integer_decomposition/reference_fourth.cpp",
+      "bytes": 726,
+      "sha256": "71425b6613b31371d3980f02efb270fe0ac92b70ba9a2600ee974efe9bdcb293"
+    },
+    {
+      "path": "problems/integer_decomposition/reference_fourth.py",
+      "bytes": 1691,
+      "sha256": "5c4251016ee48b6c2a674ab2f372a9040d66fc9d7c35b41d2d765238129023ae"
+    },
+    {
+      "path": "problems/integer_decomposition/reference_sqrt.cpp",
+      "bytes": 473,
+      "sha256": "b8ee2cc880f6b7284d497151b02a1626bae4974f434d84de7b512534b87df4da"
+    },
+    {
+      "path": "problems/integer_decomposition/reference_sqrt.py",
+      "bytes": 251,
+      "sha256": "09293d197222207221964a2a37f7e91028a004d8a3ae96f4bcaab28e39ec67de"
+    },
+    {
+      "path": "problems/integer_decomposition/sqrt_problem.jsonl",
+      "bytes": 12313,
+      "sha256": "1362703753d8297e0dcaa2c99bc790a99143bc0cf5061fcdbebfc9dee36fc44d"
+    },
+    {
+      "path": "problems/integer_decomposition/sqrt_statement.md",
+      "bytes": 1057,
+      "sha256": "b841224bc9bead43e853d04dfa578c06878f47b4212a10c5d2e314c7038caddd"
+    },
+    {
+      "path": "problems/merge_set_problem.jsonl",
+      "bytes": 20160837,
+      "sha256": "e9bc236ffd761ab055645621d1ce3c1eb0518537f5518fe4f43f5d0a9db02250"
+    },
+    {
+      "path": "provenance.json",
+      "bytes": 1088,
+      "sha256": "40c7cfb44f39ea86f6f6e11bff6c28bf0ed9173fffec7cd862e1d2500f2c7a0b"
+    },
+    {
+      "path": "qa_contact_sheet.png",
+      "bytes": 440804,
+      "sha256": "f8526ec69b397c10375e519aaaa87d59b8ac278b83d073d3ad80e787984dcf1c"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2613,
+      "sha256": "d853992191f33b11997de41bef3a769af2d8ebc56c1b94f4a51723130741c980"
+    },
+    {
+      "path": "video_qa.json",
+      "bytes": 260,
+      "sha256": "ede368ca6e1504de1aa3a39dc07613bb9dd680f758e1b773cfffa18c6f2cc117"
+    }
+  ],
+  "parts": [
+    {
+      "path": "Hy3-OJ-demo.zip.001",
+      "bytes": 8388608,
+      "sha256": "08df9e0783950a6d54e1d8772739f0daf894f493dcd0c116d8012dd1b076c293"
+    },
+    {
+      "path": "Hy3-OJ-demo.zip.002",
+      "bytes": 8388608,
+      "sha256": "2fa13c68937541cd584f02416d16b97c673ba6d47e25172835f41108aa4eaf8b"
+    },
+    {
+      "path": "Hy3-OJ-demo.zip.003",
+      "bytes": 6157095,
+      "sha256": "091ccc658a591e75e7857c98b5b3030cf63f5bef3f506f4ac6477c7acae25bfa"
+    }
+  ],
+  "archive_bytes": 22934311,
+  "archive_sha256": "a9dac37a3683614958bc814ddc0dd7e93baf6014465a0556effb7cff6a4e7533"
+}

@@ -19,6 +19,13 @@ except Exception:  # noqa: BLE001
 import json
 from pathlib import Path
 
+# 密钥零入库：运行时从项目根 .env 加载 HY3_API_KEY（本地 .env 已 gitignore）
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:  # noqa: BLE001
+    pass
+
 from hy3_oj.core.checkpoint import GracefulInterrupt, StageCheckpoint
 from hy3_oj.core.config import load_config
 from hy3_oj.core.pipeline import SolvePipeline
